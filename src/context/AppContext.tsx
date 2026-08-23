@@ -12,6 +12,7 @@ import { productService } from '../services/productService';
 import { authService } from '../services/authService';
 import { favoriteService } from '../services/favoriteService';
 import { fcmService } from '../services/fcmService';
+import { adminService, AppSettings, DEFAULT_SETTINGS } from '../services/adminService';
 
 interface AppContextType {
   // Navigation
@@ -38,6 +39,11 @@ interface AppContextType {
   reloadProducts: () => Promise<void>;
   reloadCategories: () => Promise<void>;
 
+  // Store Settings (Firebase Synchronized)
+  storeSettings: AppSettings;
+  reloadSettings: () => Promise<void>;
+  currencySymbol: string;
+
   // Cart
   cart: CartItem[];
   addToCart: (product: Product, quantity?: number) => void;
@@ -59,6 +65,8 @@ interface AppContextType {
 
   // Auth & User
   currentUser: User | null;
+  isLoadingAuth: boolean;
+  isAuthReady: boolean;
   login: (email: string, password: string) => Promise<User>;
   register: (name: string, email: string, phone: string, password: string, referralCode?: string) => Promise<User>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -91,7 +99,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
+  const [storeSettings, setStoreSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isLoadingProducts, setIsLoadingProducts] = useState<boolean>(true);
+  const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(true);
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
 
   // Cart & Wishlist
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -119,40 +130,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [toast, setToast] = useState<string | null>(null);
 
   // Initialize data and real-time subscription
+  const reloadSettings = async () => {
+    try {
+      const s = await adminService.getSettings();
+      setStoreSettings(s);
+    } catch (e) {
+      console.warn('Error reloading settings:', e);
+    }
+  };
+
   const loadAllData = async () => {
     setIsLoadingProducts(true);
-    const [prods, cats, subs, user] = await Promise.all([
-      productService.getProducts({ includeHidden: currentUser?.role === 'admin' }),
-      productService.getCategories(currentUser?.role === 'admin'),
-      productService.getSubcategories(undefined, currentUser?.role === 'admin'),
-      authService.getCurrentUser()
+    setIsLoadingAuth(true);
+
+    // 1. Wait for Firebase auth session restore to finish
+    const user = await authService.waitForAuthReady();
+    setCurrentUser(user);
+    setIsLoadingAuth(false);
+    setIsAuthReady(true);
+
+    // 2. Fetch products, categories, and store settings
+    const [prods, cats, subs, settings] = await Promise.all([
+      productService.getProducts({ includeHidden: user?.role === 'admin' }),
+      productService.getCategories(user?.role === 'admin'),
+      productService.getSubcategories(undefined, user?.role === 'admin'),
+      adminService.getSettings()
     ]);
     setProducts(prods);
     setCategories(cats);
     setSubcategories(subs);
-    setCurrentUser(user);
+    if (settings) {
+      setStoreSettings(settings);
+    }
     setIsLoadingProducts(false);
   };
 
   useEffect(() => {
     loadAllData();
 
-    // Subscribe to real-time changes from Firestore
-    const unsubscribe = productService.subscribe(async () => {
+    // Subscribe to auth state changes from Firebase
+    const unsubAuth = authService.onUserChanged((user) => {
+      setCurrentUser(user);
+      setIsLoadingAuth(false);
+      setIsAuthReady(true);
+    });
+
+    // Subscribe to real-time changes from Firestore for products & categories
+    const unsubscribeProds = productService.subscribe(async () => {
+      const activeUser = authService.getCurrentUser();
       const [prods, cats, subs] = await Promise.all([
-        productService.getProducts({ includeHidden: currentUser?.role === 'admin' }),
-        productService.getCategories(currentUser?.role === 'admin'),
-        productService.getSubcategories(undefined, currentUser?.role === 'admin')
+        productService.getProducts({ includeHidden: activeUser?.role === 'admin' }),
+        productService.getCategories(activeUser?.role === 'admin'),
+        productService.getSubcategories(undefined, activeUser?.role === 'admin')
       ]);
       setProducts(prods);
       setCategories(cats);
       setSubcategories(subs);
     });
 
+    // Subscribe to real-time store settings updates from Firestore
+    const unsubscribeSettings = adminService.subscribeToSettings((liveSettings) => {
+      setStoreSettings(liveSettings);
+    });
+
     return () => {
-      unsubscribe();
+      unsubAuth();
+      unsubscribeProds();
+      unsubscribeSettings();
     };
-  }, [currentUser?.role]);
+  }, []);
 
   // Sync Wishlist with Firebase for Authenticated Users
   useEffect(() => {
@@ -188,6 +234,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error(e);
     }
   }, [cart]);
+
+  // Synchronize cart item prices and details when products list updates
+  useEffect(() => {
+    if (products.length > 0 && cart.length > 0) {
+      setCart(prevCart => {
+        let changed = false;
+        const updatedCart = prevCart.map(item => {
+          const fresh = products.find(p => p.id === item.product.id || p.productId === item.product.id);
+          if (fresh && (
+            fresh.price !== item.product.price ||
+            fresh.nameAr !== item.product.nameAr ||
+            fresh.name !== item.product.name ||
+            fresh.image !== item.product.image ||
+            fresh.isAvailable !== item.product.isAvailable
+          )) {
+            changed = true;
+            return {
+              ...item,
+              product: fresh
+            };
+          }
+          return item;
+        });
+        return changed ? updatedCart : prevCart;
+      });
+    }
+  }, [products]);
 
   // Save Wishlist
   useEffect(() => {
@@ -413,8 +486,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = async () => {
     await authService.logout();
     setCurrentUser(null);
+    if (currentScreen === 'admin') {
+      navigateTo('home');
+    }
     showToast('تم تسجيل الخروج بنجاح');
     await reloadCategories();
+    await reloadProducts();
   };
 
   return (
@@ -436,8 +513,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         categories,
         subcategories,
         isLoadingProducts,
+        isLoadingAuth,
+        isAuthReady,
         reloadProducts,
         reloadCategories,
+        storeSettings,
+        reloadSettings,
+        currencySymbol: storeSettings.currency || '€',
         cart,
         addToCart,
         removeFromCart,
