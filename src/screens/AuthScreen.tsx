@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   User, 
   Lock, 
@@ -32,6 +32,12 @@ export const AuthScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resetSentSuccess, setResetSentSuccess] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (currentUser) {
+      navigateTo('profile');
+    }
+  }, [currentUser]);
 
   const resetFormState = () => {
     setErrorMessage(null);

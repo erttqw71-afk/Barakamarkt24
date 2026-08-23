@@ -32,7 +32,8 @@ export const HomeScreen: React.FC = () => {
     setSearchQuery,
     cartCount,
     currentUser,
-    isLoadingProducts
+    isLoadingProducts,
+    storeSettings
   } = useApp();
 
   // Selected quick filter pill for categories (or 'all')
@@ -40,6 +41,11 @@ export const HomeScreen: React.FC = () => {
   
   // Pagination / Limit for newly added / general products stream
   const [visibleNewCount, setVisibleNewCount] = useState<number>(8);
+
+  // Filter active categories for display
+  const activeCategories = useMemo(() => {
+    return categories.filter(c => c.isActive !== false);
+  }, [categories]);
 
   // Filter products that are available/visible
   const visibleProducts = useMemo(() => {
@@ -63,12 +69,22 @@ export const HomeScreen: React.FC = () => {
       .slice(0, 6);
   }, [visibleProducts]);
 
-  // 3. New Arrivals (منتجات جديدة) - sorted by createdAt if present or reversed list
+  // 3. New Arrivals (منتجات جديدة) - sorted by createdAt timestamp/date
   const newArrivals = useMemo(() => {
     let sorted = [...visibleProducts];
     sorted.sort((a, b) => {
-      const timeA = a.createdAt?.seconds ? a.createdAt.seconds : 0;
-      const timeB = b.createdAt?.seconds ? b.createdAt.seconds : 0;
+      const getTimestamp = (val: any) => {
+        if (!val) return 0;
+        if (typeof val === 'number') return val;
+        if (val.seconds) return val.seconds * 1000;
+        if (typeof val === 'string') {
+          const t = new Date(val).getTime();
+          return isNaN(t) ? 0 : t;
+        }
+        return 0;
+      };
+      const timeA = getTimestamp(a.createdAt);
+      const timeB = getTimestamp(b.createdAt);
       return timeB - timeA;
     });
 
@@ -89,6 +105,27 @@ export const HomeScreen: React.FC = () => {
   return (
     <div className="space-y-6 pb-12" dir="rtl">
       
+      {/* Dynamic Announcement Banner from Firebase Store Settings */}
+      {storeSettings?.announcementText && storeSettings.announcementText.trim() !== '' && (
+        <div className="bg-emerald-900 text-amber-200 text-xs px-4 py-2 font-bold text-center border-b border-emerald-950/40 flex items-center justify-center gap-2 shadow-xs">
+          <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
+          <span>{storeSettings.announcementText}</span>
+        </div>
+      )}
+
+      {/* Store Closed Notice Banner if isOpen is false */}
+      {storeSettings?.isOpen === false && (
+        <div className="mx-4 bg-amber-500/15 border border-amber-500/40 text-amber-950 p-3.5 rounded-2xl flex items-start gap-3 shadow-2xs">
+          <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+          <div className="text-xs space-y-0.5">
+            <div className="font-extrabold text-amber-900">المتجر مغلق حاليًا لاستقبال الطلبات الجديدة</div>
+            <div className="text-[11px] text-amber-800/90 leading-relaxed">
+              {storeSettings.closedMessageAr || 'يمكنك تصفح المنتجات وإضافتها لقائمة الرغبات. نرحب بطلباتكم فور إعادة الافتتاح.'}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 1. Header with Store Logo, Name, Quick Cart and Account buttons */}
       <div className="bg-white px-4 pt-3.5 pb-2.5 border-b border-stone-100/80 shadow-2xs">
         <div className="flex items-center justify-between gap-3">
@@ -232,13 +269,13 @@ export const HomeScreen: React.FC = () => {
           </button>
         </div>
 
-        {categories.length === 0 && isLoadingProducts ? (
+        {activeCategories.length === 0 && isLoadingProducts ? (
           <div className="px-4">
             <CategoryPillsSkeleton count={5} />
           </div>
         ) : (
           <div className="flex gap-3 overflow-x-auto px-4 pb-2 no-scrollbar scroll-smooth">
-            {categories.map((cat) => (
+            {activeCategories.map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => {

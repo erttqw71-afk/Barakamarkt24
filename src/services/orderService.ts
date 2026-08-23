@@ -7,7 +7,9 @@ import {
   query, 
   where,
   orderBy,
-  writeBatch
+  writeBatch,
+  onSnapshot,
+  Unsubscribe
 } from 'firebase/firestore';
 import { db, collections } from './firebaseConfig';
 import { CartItem, Order, OrderItem, OrderStatus } from '../types';
@@ -15,12 +17,62 @@ import { CartItem, Order, OrderItem, OrderStatus } from '../types';
 class OrderService {
   private localOrdersCache: Order[] = [];
 
-  // Create an order in Cloud Firestore (orders & orderItems collections)
+  // Subscribe to real-time changes in orders (for Admin live updates)
+  subscribeToOrders(callback: (orders: Order[]) => void): Unsubscribe {
+    try {
+      const q = collections.orders;
+      return onSnapshot(q, (snapshot) => {
+        const firestoreOrders = snapshot.docs.map(d => {
+          const data = d.data() as any;
+          return {
+            ...data,
+            id: d.id,
+            orderId: data.orderId || d.id,
+            paymentMethod: data.paymentMethod || 'cash_on_delivery',
+            paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending')
+          } as Order;
+        });
+
+        // Sort descending by timestamp or createdAt
+        firestoreOrders.sort((a, b) => {
+          if (b.timestamp && a.timestamp) {
+            return b.timestamp.localeCompare(a.timestamp);
+          }
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+        });
+
+        this.localOrdersCache = firestoreOrders;
+        callback(firestoreOrders);
+      }, (err) => {
+        console.warn('Realtime orders snapshot error:', err);
+      });
+    } catch (e) {
+      console.warn('Failed to attach realtime order listener:', e);
+      return () => {};
+    }
+  }
+
+  // Create an order in Cloud Firestore (orders, orderItems, and notifications collections)
   async createOrder(orderData: Omit<Order, 'id' | 'createdAt' | 'status'> & { orderId?: string; status?: OrderStatus }): Promise<Order> {
     const randomNum = Math.floor(100000 + Math.random() * 900000);
     const orderId = orderData.orderId || `ORD-${randomNum}`;
     const now = new Date();
     const formattedDate = `${now.toLocaleDateString('ar-SY', { day: 'numeric', month: 'short', year: 'numeric' })} - ${now.toLocaleTimeString('ar-SY', { hour: '2-digit', minute: '2-digit' })}`;
+
+    // Support payment method accurately (cash_on_delivery, bank_transfer, card, etc.)
+    const paymentMethod = orderData.paymentMethod || 'cash_on_delivery';
+
+    // Support payment status accurately depending on payment method
+    let paymentStatus = orderData.paymentStatus;
+    if (!paymentStatus) {
+      if (paymentMethod === 'bank_transfer') {
+        paymentStatus = 'awaiting_transfer';
+      } else if (paymentMethod === 'card') {
+        paymentStatus = 'paid';
+      } else {
+        paymentStatus = 'pending';
+      }
+    }
 
     const newOrder: Order = {
       ...orderData,
@@ -28,7 +80,11 @@ class OrderService {
       orderId: orderId,
       userId: orderData.userId || 'guest',
       status: orderData.status || 'pending',
-      createdAt: formattedDate
+      paymentMethod,
+      paymentStatus,
+      createdAt: formattedDate,
+      updatedAt: formattedDate,
+      timestamp: now.toISOString()
     };
 
     try {
@@ -49,8 +105,11 @@ class OrderService {
         discount: newOrder.discount || 0,
         total: newOrder.total,
         status: newOrder.status,
+        paymentMethod: newOrder.paymentMethod,
+        paymentStatus: newOrder.paymentStatus,
         createdAt: newOrder.createdAt,
-        timestamp: now.toISOString(),
+        updatedAt: newOrder.updatedAt,
+        timestamp: newOrder.timestamp,
         notes: newOrder.notes || '',
         items: newOrder.items
       });
@@ -71,6 +130,19 @@ class OrderService {
         };
         batch.set(itemDocRef, orderItemRecord);
       }
+
+      // 3. Save notification for Admin in Firestore notifications collection
+      const notifId = `notif-order-${orderId}`;
+      const notifDocRef = doc(collections.notifications, notifId);
+      batch.set(notifDocRef, {
+        id: notifId,
+        userId: 'admin',
+        title: `طلب جديد #${orderId}`,
+        message: `طلب جديد من ${newOrder.customerName || 'عميل'} بقيمة €${newOrder.total.toFixed(2)} (${paymentMethod === 'bank_transfer' ? 'تحويل بنكي' : paymentMethod === 'card' ? 'بطاقة' : 'عند الاستلام'})`,
+        read: false,
+        createdAt: formattedDate,
+        type: 'order'
+      });
 
       await batch.commit();
     } catch (e) {
@@ -96,7 +168,9 @@ class OrderService {
           return {
             ...data,
             id: d.id,
-            orderId: data.orderId || d.id
+            orderId: data.orderId || d.id,
+            paymentMethod: data.paymentMethod || 'cash_on_delivery',
+            paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending')
           } as Order;
         });
 
@@ -128,7 +202,9 @@ class OrderService {
         return { 
           ...data, 
           id: snap.id, 
-          orderId: data.orderId || snap.id 
+          orderId: data.orderId || snap.id,
+          paymentMethod: data.paymentMethod || 'cash_on_delivery',
+          paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending')
         } as Order;
       }
     } catch (e) {

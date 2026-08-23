@@ -15,9 +15,9 @@ import { WishlistScreen } from './screens/WishlistScreen';
 import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 
 const ScreenRouter: React.FC = () => {
-  const { currentScreen, isLoadingProducts } = useApp();
+  const { currentScreen, isLoadingProducts, isLoadingAuth } = useApp();
 
-  if (isLoadingProducts) {
+  if (isLoadingProducts || isLoadingAuth) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-3 p-6 text-center">
         <div className="w-10 h-10 border-3 border-emerald-800 border-t-transparent rounded-full animate-spin" />

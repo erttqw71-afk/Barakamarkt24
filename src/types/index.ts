@@ -145,7 +145,9 @@ export interface User {
   createdAt?: string;
 }
 
-export type PaymentMethod = 'cod' | 'card' | 'paypal' | 'klarna' | 'bank_transfer' | 'apple_pay';
+export type PaymentMethod = 'cash_on_delivery' | 'cod' | 'card' | 'paypal' | 'klarna' | 'bank_transfer' | 'apple_pay';
+
+export type PaymentStatus = 'pending' | 'paid' | 'awaiting_transfer' | 'failed' | 'refunded';
 
 export interface CustomerOrderInfo {
   fullName: string;
@@ -182,9 +184,12 @@ export interface Order {
   total: number;
   status: OrderStatus;
   createdAt: string;
+  updatedAt?: string;
+  timestamp?: string;
   notes?: string;
   customerInfo?: CustomerOrderInfo;
-  paymentMethod?: PaymentMethod;
+  paymentMethod?: PaymentMethod | string;
+  paymentStatus?: PaymentStatus | string;
   deliveryDateEstimated?: string;
   coldShippingIncluded?: boolean;
 }

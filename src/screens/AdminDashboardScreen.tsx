@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldCheck, 
   Package, 
@@ -40,6 +40,10 @@ import {
   Ticket,
   Share2,
   Bell,
+  BellRing,
+  Volume2,
+  VolumeX,
+  CheckCheck,
   Settings,
   Send,
   Save,
@@ -74,6 +78,8 @@ export const AdminDashboardScreen: React.FC = () => {
     subcategories, 
     reloadProducts, 
     reloadCategories,
+    reloadSettings,
+    storeSettings,
     showToast, 
     navigateTo, 
     currentUser,
@@ -118,6 +124,71 @@ export const AdminDashboardScreen: React.FC = () => {
   const [notifMessage, setNotifMessage] = useState<string>('');
   const [notifType, setNotifType] = useState<'promo' | 'system' | 'order'>('promo');
   const [isSendingNotif, setIsSendingNotif] = useState<boolean>(false);
+  const [soundAlertsEnabled, setSoundAlertsEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('baraka_admin_sound_alerts') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [newOrderAlert, setNewOrderAlert] = useState<Order | null>(null);
+  const isInitialLoadRef = useRef<boolean>(true);
+  const prevOrderCountRef = useRef<number>(0);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  // Play audio chime when a new order arrives
+  const playNewOrderSound = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      
+      const ctx = audioContextRef.current || new AudioCtx();
+      audioContextRef.current = ctx;
+      
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      // Pleasant 3-note chime: C5 (523Hz) -> E5 (659Hz) -> G5 (784Hz) -> C6 (1046Hz)
+      const notes = [523.25, 659.25, 783.99, 1046.50];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.14);
+        
+        gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.14);
+        gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + idx * 0.14 + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.14 + 0.4);
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.start(ctx.currentTime + idx * 0.14);
+        osc.stop(ctx.currentTime + idx * 0.14 + 0.45);
+      });
+    } catch (e) {
+      console.warn('Audio alert could not be played:', e);
+    }
+  };
+
+  // Toggle Sound Notifications
+  const handleToggleSoundAlerts = () => {
+    const nextState = !soundAlertsEnabled;
+    setSoundAlertsEnabled(nextState);
+    try {
+      localStorage.setItem('baraka_admin_sound_alerts', nextState ? 'true' : 'false');
+    } catch (e) {
+      console.warn(e);
+    }
+    if (nextState) {
+      playNewOrderSound();
+      showToast('🔊 تم تفعيل التنبيهات الصوتية للطلبات الجديدة بنجاح!');
+    } else {
+      showToast('🔇 تم كتم التنبيهات الصوتية للطلبات');
+    }
+  };
 
   // Settings State
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -128,6 +199,7 @@ export const AdminDashboardScreen: React.FC = () => {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [catName, setCatName] = useState('');
   const [catNameEn, setCatNameEn] = useState('');
+  const [catNameDe, setCatNameDe] = useState('');
   const [catDescription, setCatDescription] = useState('');
   const [catImage, setCatImage] = useState('https://images.unsplash.com/photo-1552767059-ce182ead6c1b?auto=format&fit=crop&w=600&q=80');
   const [catSortOrder, setCatSortOrder] = useState('1');
@@ -157,6 +229,7 @@ export const AdminDashboardScreen: React.FC = () => {
   // Product Form Fields
   const [prodName, setProdName] = useState('');
   const [prodNameEn, setProdNameEn] = useState('');
+  const [prodNameDe, setProdNameDe] = useState('');
   const [prodDesc, setProdDesc] = useState('');
   const [prodPrice, setProdPrice] = useState('');
   const [prodOldPrice, setProdOldPrice] = useState('');
@@ -209,7 +282,45 @@ export const AdminDashboardScreen: React.FC = () => {
 
   useEffect(() => {
     fetchAllData();
-  }, []);
+
+    // Attach real-time subscription for incoming orders
+    const unsubscribe = orderService.subscribeToOrders((realtimeOrders) => {
+      setOrders(realtimeOrders);
+
+      if (isInitialLoadRef.current) {
+        isInitialLoadRef.current = false;
+        prevOrderCountRef.current = realtimeOrders.length;
+        return;
+      }
+
+      // Check if a new order arrived
+      if (realtimeOrders.length > prevOrderCountRef.current) {
+        const latestOrder = realtimeOrders[0];
+        if (latestOrder) {
+          setNewOrderAlert(latestOrder);
+
+          // Play sound if user enabled sound notifications
+          if (soundAlertsEnabled) {
+            playNewOrderSound();
+          }
+
+          // Show immediate Toast
+          showToast(`🔔 طلب جديد #${latestOrder.orderId || latestOrder.id} بقيمة €${latestOrder.total.toFixed(2)} وصل الآن!`);
+
+          // Refresh notifications list to include new order notification
+          adminService.getAllNotifications().then(updated => {
+            setNotifications(updated);
+          }).catch(() => {});
+        }
+      }
+
+      prevOrderCountRef.current = realtimeOrders.length;
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [soundAlertsEnabled]);
 
   // Check Admin Authorization strictly
   if (currentUser?.role !== 'admin') {
@@ -407,7 +518,10 @@ export const AdminDashboardScreen: React.FC = () => {
     const ok = await adminService.saveSettings(settings);
     setIsSavingSettings(false);
     if (ok) {
-      showToast('تم حفظ وتحديث إعدادات المتجر في Firebase Firestore');
+      await reloadSettings();
+      showToast('تم حفظ وتحديث إعدادات المتجر في Firebase بنجاح');
+    } else {
+      showToast('حدث خطأ أثناء حفظ الإعدادات في Firebase');
     }
   };
 
@@ -418,6 +532,7 @@ export const AdminDashboardScreen: React.FC = () => {
     setEditingProduct(null);
     setProdName('');
     setProdNameEn('');
+    setProdNameDe('');
     setProdDesc('');
     setProdPrice('');
     setProdOldPrice('');
@@ -445,6 +560,7 @@ export const AdminDashboardScreen: React.FC = () => {
     setEditingProduct(p);
     setProdName(p.nameAr || p.name || '');
     setProdNameEn(p.nameEn || '');
+    setProdNameDe(p.nameDe || '');
     setProdDesc(p.descriptionAr || p.description || '');
     setProdPrice(p.price.toString());
     setProdOldPrice(p.oldPrice ? p.oldPrice.toString() : (p.originalPrice ? p.originalPrice.toString() : ''));
@@ -512,6 +628,7 @@ export const AdminDashboardScreen: React.FC = () => {
       name: prodName.trim(),
       nameAr: prodName.trim(),
       nameEn: prodNameEn.trim() || undefined,
+      nameDe: prodNameDe.trim() || undefined,
       description: prodDesc.trim() || 'منتج بلدي سوري فاخر من خيرات الطبيعة',
       descriptionAr: prodDesc.trim() || 'منتج بلدي سوري فاخر من خيرات الطبيعة',
       price,
@@ -641,6 +758,7 @@ export const AdminDashboardScreen: React.FC = () => {
     setEditingCategory(null);
     setCatName('');
     setCatNameEn('');
+    setCatNameDe('');
     setCatDescription('');
     setCatImage('https://images.unsplash.com/photo-1552767059-ce182ead6c1b?auto=format&fit=crop&w=600&q=80');
     setCatSortOrder((categories.length + 1).toString());
@@ -652,6 +770,7 @@ export const AdminDashboardScreen: React.FC = () => {
     setEditingCategory(cat);
     setCatName(cat.nameAr || cat.name || '');
     setCatNameEn(cat.nameEn || '');
+    setCatNameDe(cat.nameDe || '');
     setCatDescription(cat.descriptionAr || cat.description || '');
     setCatImage(cat.image);
     setCatSortOrder(cat.sortOrder !== undefined ? cat.sortOrder.toString() : '1');
@@ -670,6 +789,7 @@ export const AdminDashboardScreen: React.FC = () => {
       name: catName.trim(),
       nameAr: catName.trim(),
       nameEn: catNameEn.trim() || undefined,
+      nameDe: catNameDe.trim() || undefined,
       description: catDescription.trim(),
       descriptionAr: catDescription.trim(),
       image: catImage.trim(),
@@ -695,8 +815,37 @@ export const AdminDashboardScreen: React.FC = () => {
     showToast('تم تغيير حالة تفعيل القسم');
   };
 
+  const handleMoveCategoryOrder = async (cat: Category, direction: 'up' | 'down') => {
+    const sortedCats = [...categories].sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
+    const currentIndex = sortedCats.findIndex(c => c.id === cat.id);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= sortedCats.length) return;
+
+    const targetCat = sortedCats[targetIndex];
+    const currentOrder = cat.sortOrder ?? (currentIndex + 1);
+    const targetOrder = targetCat.sortOrder ?? (targetIndex + 1);
+
+    // Swap orders
+    const newCurrentOrder = targetOrder === currentOrder ? (direction === 'up' ? currentOrder - 1 : currentOrder + 1) : targetOrder;
+    const newTargetOrder = currentOrder;
+
+    await productService.updateCategory(cat.id, { sortOrder: newCurrentOrder });
+    await productService.updateCategory(targetCat.id, { sortOrder: newTargetOrder });
+    await reloadCategories();
+    showToast(`تم تغيير ترتيب قسم "${cat.nameAr || cat.name}"`);
+  };
+
   const handleDeleteCategory = async (cat: Category) => {
-    if (window.confirm(`هل أنت متأكد من حذف قسم "${cat.nameAr || cat.name}" من Firebase؟`)) {
+    // 3. Product Safety Check: Check if any products are associated with this category
+    const associatedProducts = products.filter(p => p.categoryId === cat.id || (cat.categoryId && p.categoryId === cat.categoryId));
+    if (associatedProducts.length > 0) {
+      alert(`⚠️ لا يمكن حذف قسم "${cat.nameAr || cat.name}" لوجود (${associatedProducts.length}) منتجات مرتبطة به حالياً.\n\nلحماية المنتجات من الضياع، يُرجى نقل المنتجات أولاً إلى قسم آخر أو تعطيل هذا القسم بدلاً من حذفه.`);
+      return;
+    }
+
+    if (window.confirm(`هل أنت متأكد من حذف قسم "${cat.nameAr || cat.name}" نهائياً من Firebase؟`)) {
       await productService.deleteCategory(cat.id);
       await reloadCategories();
       await reloadProducts();
@@ -723,19 +872,20 @@ export const AdminDashboardScreen: React.FC = () => {
   // Calculate Metrics
   const totalSales = orders.reduce((sum, ord) => sum + (ord.status !== 'cancelled' ? ord.total : 0), 0);
   const pendingOrdersCount = orders.filter(o => o.status === 'pending').length;
+  const unreadNotifsCount = notifications.filter(n => !n.read).length;
   const availableProdsCount = products.filter(p => p.isAvailable !== false).length;
   const hiddenProdsCount = products.filter(p => p.isAvailable === false).length;
 
-  const ADMIN_NAV_TABS: { id: AdminTab; label: string; icon: any; count?: number }[] = [
+  const ADMIN_NAV_TABS: { id: AdminTab; label: string; icon: any; count?: number; highlight?: boolean }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: TrendingUp },
     { id: 'products', label: 'المنتجات', icon: Package, count: products.length },
     { id: 'categories', label: 'الأقسام', icon: Grid, count: categories.length },
-    { id: 'orders', label: 'الطلبات', icon: ShoppingBag, count: orders.length },
+    { id: 'orders', label: 'الطلبات', icon: ShoppingBag, count: orders.length, highlight: pendingOrdersCount > 0 },
     { id: 'users', label: 'المستخدمون', icon: Users, count: usersList.length },
     { id: 'offers', label: 'العروض', icon: Gift, count: offers.length },
     { id: 'coupons', label: 'الكوبونات', icon: Ticket, count: coupons.length },
     { id: 'referrals', label: 'الإحالات', icon: Share2, count: referrals.length },
-    { id: 'notifications', label: 'الإشعارات', icon: Bell, count: notifications.length },
+    { id: 'notifications', label: 'الإشعارات', icon: Bell, count: unreadNotifsCount > 0 ? unreadNotifsCount : notifications.length, highlight: unreadNotifsCount > 0 },
     { id: 'settings', label: 'الإعدادات', icon: Settings }
   ];
 
@@ -762,6 +912,29 @@ export const AdminDashboardScreen: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Enable/Disable Sound Notifications Button */}
+            <button
+              onClick={handleToggleSoundAlerts}
+              title={soundAlertsEnabled ? 'التنبيهات الصوتية مفعلة (انقر للكتم)' : 'تفعيل التنبيهات الصوتية للطلبات الجديدة'}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs border ${
+                soundAlertsEnabled 
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30' 
+                  : 'bg-stone-800 text-stone-300 border-stone-700 hover:bg-stone-700 hover:text-white'
+              }`}
+            >
+              {soundAlertsEnabled ? (
+                <>
+                  <Volume2 className="w-4 h-4 text-amber-400 animate-pulse" />
+                  <span className="hidden sm:inline">التنبيهات مفعّلة</span>
+                </>
+              ) : (
+                <>
+                  <VolumeX className="w-4 h-4 text-stone-400" />
+                  <span>تفعيل التنبيهات</span>
+                </>
+              )}
+            </button>
+
             <button
               onClick={fetchAllData}
               title="تحديث البيانات"
@@ -778,6 +951,45 @@ export const AdminDashboardScreen: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Real-time Order Popup Banner when a new order arrives */}
+        {newOrderAlert && (
+          <div className="bg-amber-500/20 border border-amber-500/50 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-white animate-bounce-short">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500 text-stone-950 flex items-center justify-center font-bold">
+                <BellRing className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-sm text-amber-300">طلب جديد وصل الآن! #{newOrderAlert.orderId || newOrderAlert.id}</span>
+                  <span className="bg-amber-400 text-stone-950 text-[10px] font-black px-2 py-0.2 rounded-full">جديد</span>
+                </div>
+                <p className="text-xs text-stone-300">
+                  من <strong className="text-white">{newOrderAlert.customerName || 'عميل'}</strong> - الإجمالي: <strong className="text-amber-300">€{newOrderAlert.total.toFixed(2)}</strong> ({newOrderAlert.paymentMethod === 'bank_transfer' ? 'تحويل بنكي' : newOrderAlert.paymentMethod === 'card' ? 'بطاقة بنكية' : 'دفع عند الاستلام'})
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setActiveTab('orders');
+                  setOrderStatusFilter('pending');
+                  setNewOrderAlert(null);
+                }}
+                className="bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-black px-3 py-1.5 rounded-xl cursor-pointer shadow-xs transition-colors"
+              >
+                عرض الطلب
+              </button>
+              <button
+                onClick={() => setNewOrderAlert(null)}
+                className="text-stone-400 hover:text-white p-1 cursor-pointer"
+                title="إغلاق"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Navigation Tabs Bar */}
         <div className="flex bg-stone-800/90 p-1 rounded-2xl gap-1 text-xs font-bold overflow-x-auto no-scrollbar">
@@ -796,7 +1008,11 @@ export const AdminDashboardScreen: React.FC = () => {
                 <span>{tab.label}</span>
                 {tab.count !== undefined && (
                   <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
-                    isActive ? 'bg-emerald-100 text-emerald-900' : 'bg-stone-700 text-stone-300'
+                    tab.highlight 
+                      ? 'bg-amber-500 text-stone-950 animate-pulse' 
+                      : isActive 
+                        ? 'bg-emerald-100 text-emerald-900' 
+                        : 'bg-stone-700 text-stone-300'
                   }`}>
                     {tab.count}
                   </span>
@@ -1105,46 +1321,86 @@ export const AdminDashboardScreen: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {categories.map((cat) => (
-              <div 
-                key={cat.id}
-                className="bg-white p-3 rounded-2xl border border-stone-200/80 shadow-2xs space-y-2"
-              >
-                <div className="flex items-center gap-3">
-                  <img src={cat.image} alt={cat.nameAr} className="w-12 h-12 rounded-xl object-cover border border-stone-100" />
-                  <div className="min-w-0 flex-1">
-                    <span className="font-bold text-xs text-stone-900 block truncate">{cat.nameAr || cat.name}</span>
-                    <span className="text-[10px] text-stone-400 font-sans block">{cat.nameEn || cat.id}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-stone-100 text-xs">
-                  <button
-                    onClick={() => handleToggleCategoryActive(cat.id)}
-                    className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${
-                      cat.isActive !== false ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'
+            {[...categories]
+              .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999))
+              .map((cat, idx) => {
+                const prodCount = products.filter(p => p.categoryId === cat.id || (cat.categoryId && p.categoryId === cat.categoryId)).length;
+                return (
+                  <div 
+                    key={cat.id}
+                    className={`bg-white p-3.5 rounded-2xl border transition-all space-y-2.5 ${
+                      cat.isActive !== false ? 'border-stone-200/80 shadow-2xs' : 'border-stone-200 bg-stone-50/70 opacity-85'
                     }`}
                   >
-                    {cat.isActive !== false ? 'مفعل' : 'معطل'}
-                  </button>
+                    <div className="flex items-center gap-3">
+                      <img src={cat.image} alt={cat.nameAr} className="w-13 h-13 rounded-xl object-cover border border-stone-100 shrink-0" />
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-bold text-xs text-stone-900 block truncate">{cat.nameAr || cat.name}</span>
+                          <span className="text-[10px] bg-stone-100 text-stone-600 font-mono px-1.5 py-0.5 rounded-md shrink-0">
+                            #{cat.sortOrder ?? idx + 1}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-stone-400 font-sans block truncate">
+                          {cat.nameDe ? `${cat.nameDe} • ` : ''}{cat.nameEn || cat.id}
+                        </span>
+                        <span className="inline-block text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.2 rounded-md">
+                          {prodCount} منتج مرتبط
+                        </span>
+                      </div>
+                    </div>
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleOpenEditCategory(cat)}
-                      className="p-1 text-stone-600 hover:bg-stone-100 rounded-lg"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteCategory(cat)}
-                      className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center justify-between pt-2 border-t border-stone-100 text-xs">
+                      {/* Active / Inactive Status Toggle */}
+                      <button
+                        onClick={() => handleToggleCategoryActive(cat.id)}
+                        className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer transition-colors ${
+                          cat.isActive !== false 
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100' 
+                            : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                        }`}
+                        title="تبديل حالة التفعيل (القسم المعطل لا يظهر للعميل)"
+                      >
+                        {cat.isActive !== false ? '✓ نشط للعملاء' : '✕ معطل (مخفي)'}
+                      </button>
+
+                      {/* Sort Up / Down and Actions */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleMoveCategoryOrder(cat, 'up')}
+                          disabled={idx === 0}
+                          className="p-1 text-stone-600 hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg cursor-pointer"
+                          title="تحريك لأعلى"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          onClick={() => handleMoveCategoryOrder(cat, 'down')}
+                          disabled={idx === categories.length - 1}
+                          className="p-1 text-stone-600 hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg cursor-pointer"
+                          title="تحريك لأسفل"
+                        >
+                          ▼
+                        </button>
+                        <button
+                          onClick={() => handleOpenEditCategory(cat)}
+                          className="p-1 text-stone-600 hover:bg-stone-100 rounded-lg cursor-pointer"
+                          title="تعديل بيانات القسم"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCategory(cat)}
+                          className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                          title="حذف القسم"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
+                );
+              })}
           </div>
         </div>
       )}
@@ -1225,8 +1481,8 @@ export const AdminDashboardScreen: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Customer Info */}
-                      <div className="text-xs text-stone-600 bg-stone-50/70 p-3 rounded-2xl border border-stone-100 space-y-1">
+                      {/* Customer Info & Payment Details */}
+                      <div className="text-xs text-stone-600 bg-stone-50/70 p-3 rounded-2xl border border-stone-100 space-y-2">
                         <div className="flex justify-between font-bold text-stone-900">
                           <span>العميل: {ord.customerName || (ord as any).shippingAddress?.fullName || 'عميل المتجر'}</span>
                           <span className="font-sans text-stone-700">{ord.phone || (ord as any).shippingAddress?.phone}</span>
@@ -1234,6 +1490,42 @@ export const AdminDashboardScreen: React.FC = () => {
                         <p className="text-stone-500 text-[11px]">
                           العنوان: {ord.address || (ord as any).shippingAddress?.street} {ord.city || (ord as any).shippingAddress?.city}
                         </p>
+                        <div className="flex items-center justify-between pt-1.5 border-t border-stone-200/60 flex-wrap gap-2 text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-stone-500">طريقة الدفع:</span>
+                            <span className="font-bold text-stone-800 bg-stone-100 px-2 py-0.5 rounded-md border border-stone-200">
+                              {ord.paymentMethod === 'bank_transfer'
+                                ? 'تحويل بنكي (Bank Transfer)'
+                                : ord.paymentMethod === 'card'
+                                ? 'بطاقة بنكية (Card)'
+                                : 'الدفع عند الاستلام (COD)'}
+                            </span>
+                          </div>
+                          {ord.paymentStatus && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-stone-500">حالة الدفع:</span>
+                              <span className={`font-bold px-2 py-0.5 rounded-md border ${
+                                ord.paymentStatus === 'paid'
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                  : ord.paymentStatus === 'awaiting_transfer'
+                                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                  : 'bg-stone-100 text-stone-700 border-stone-200'
+                              }`}>
+                                {ord.paymentStatus === 'paid'
+                                  ? 'تم الدفع'
+                                  : ord.paymentStatus === 'awaiting_transfer'
+                                  ? 'بانتظار التحويل'
+                                  : 'قيد الانتظار'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        {ord.notes && (
+                          <div className="pt-1 border-t border-stone-200/60 text-[11px] text-stone-600">
+                            <span className="font-bold text-stone-700">ملاحظات: </span>
+                            <span>{ord.notes}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Items */}
@@ -1542,22 +1834,107 @@ export const AdminDashboardScreen: React.FC = () => {
 
           {/* Previous Notifications */}
           <div className="space-y-2">
-            <h4 className="font-bold text-xs text-stone-800">الإشعارات السابقة ({notifications.length})</h4>
-            {notifications.map((n) => (
-              <div key={n.id} className="bg-white p-3 rounded-2xl border border-stone-200/80 shadow-2xs flex justify-between items-start gap-2 text-xs">
-                <div>
-                  <span className="font-bold text-stone-900 block">{n.title}</span>
-                  <p className="text-stone-600 text-[11px]">{n.message}</p>
-                  <span className="text-[10px] text-stone-400 font-sans">{n.createdAt}</span>
-                </div>
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-xs text-stone-800">
+                سجل الإشعارات والتنبيهات ({notifications.length})
+                {unreadNotifsCount > 0 && (
+                  <span className="mr-2 bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-200">
+                    {unreadNotifsCount} غير مقروء
+                  </span>
+                )}
+              </h4>
+              {unreadNotifsCount > 0 && (
                 <button
-                  onClick={() => handleDeleteNotification(n.id)}
-                  className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                  onClick={async () => {
+                    await adminService.markAllNotificationsAsRead();
+                    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                    showToast('تم تحديد جميع الإشعارات كمقروءة');
+                  }}
+                  className="text-xs text-emerald-800 hover:text-emerald-900 font-bold flex items-center gap-1 cursor-pointer"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <CheckCheck className="w-3.5 h-3.5" />
+                  <span>تحديد الكل كمقروء</span>
                 </button>
+              )}
+            </div>
+
+            {notifications.length === 0 ? (
+              <div className="p-8 text-center bg-stone-50 rounded-2xl border border-dashed border-stone-200 text-stone-400 text-xs">
+                لا توجد إشعارات حالياً
               </div>
-            ))}
+            ) : (
+              notifications.map((n) => (
+                <div 
+                  key={n.id} 
+                  className={`p-3.5 rounded-2xl border shadow-2xs flex justify-between items-start gap-3 text-xs transition-all ${
+                    !n.read 
+                      ? 'bg-amber-50/60 border-amber-200/90' 
+                      : 'bg-white border-stone-200/80'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5 flex-1">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                      n.type === 'order' 
+                        ? 'bg-emerald-100 text-emerald-800' 
+                        : n.type === 'promo' 
+                          ? 'bg-purple-100 text-purple-800' 
+                          : 'bg-blue-100 text-blue-800'
+                    }`}>
+                      {n.type === 'order' ? <ShoppingBag className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
+                    </div>
+                    <div className="space-y-0.5 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-stone-900">{n.title}</span>
+                        {!n.read && (
+                          <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                        )}
+                      </div>
+                      <p className="text-stone-600 text-[11px] leading-relaxed">{n.message}</p>
+                      <div className="flex items-center gap-3 pt-1 text-[10px] text-stone-400 font-sans">
+                        <span>{n.createdAt}</span>
+                        {n.targetOrderId && (
+                          <button
+                            onClick={() => {
+                              setActiveTab('orders');
+                              setOrderStatusFilter('all');
+                              if (!n.read) {
+                                adminService.markNotificationAsRead(n.id);
+                                setNotifications(prev => prev.map(item => item.id === n.id ? { ...item, read: true } : item));
+                              }
+                            }}
+                            className="text-emerald-800 hover:underline font-bold font-sans cursor-pointer flex items-center gap-0.5"
+                          >
+                            <span>عرض الطلب #{n.targetOrderId}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    {!n.read && (
+                      <button
+                        onClick={async () => {
+                          await adminService.markNotificationAsRead(n.id);
+                          setNotifications(prev => prev.map(item => item.id === n.id ? { ...item, read: true } : item));
+                        }}
+                        title="تحديد كمقروء"
+                        className="p-1.5 text-stone-500 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg cursor-pointer transition-colors"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteNotification(n.id)}
+                      title="حذف الإشعار"
+                      className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
@@ -1566,84 +1943,331 @@ export const AdminDashboardScreen: React.FC = () => {
       {/* 10. SETTINGS MANAGEMENT TAB                                */}
       {/* ========================================================= */}
       {activeTab === 'settings' && settings && (
-        <div className="bg-white p-4 rounded-3xl border border-stone-200/80 shadow-2xs space-y-4">
-          <div>
-            <h3 className="font-extrabold text-sm text-stone-900">إعدادات وتكوين المتجر العام</h3>
-            <p className="text-xs text-stone-500">تحديث رسوم التوصيل، الحد الأدنى، ومعلومات التواصل</p>
+        <div className="bg-white p-4 sm:p-6 rounded-3xl border border-stone-200/80 shadow-2xs space-y-6">
+          <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+            <div>
+              <h3 className="font-extrabold text-sm sm:text-base text-stone-900 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-emerald-800" />
+                <span>إعدادات وتكوين متجر بركة ماركت 24</span>
+              </h3>
+              <p className="text-xs text-stone-500">حالة فتح المتجر، رسوم التوصيل، الحد الأدنى للطلب، وطرق الدفع المقبولة في Firebase</p>
+            </div>
+            <span className="bg-emerald-50 text-emerald-800 text-[11px] font-bold px-2.5 py-1 rounded-xl border border-emerald-200">
+              Firestore Doc: settings/store
+            </span>
           </div>
 
-          <form onSubmit={handleSaveSettings} className="space-y-4 text-xs">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="font-bold text-stone-700">اسم المتجر بالعربية</label>
-                <input
-                  type="text"
-                  value={settings.storeNameAr}
-                  onChange={(e) => setSettings({ ...settings, storeNameAr: e.target.value })}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-bold"
-                />
+          <form onSubmit={handleSaveSettings} className="space-y-6 text-xs">
+            {/* Section 1: Store Open / Close Status */}
+            <div className="bg-stone-50/80 p-4 rounded-2xl border border-stone-200/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-stone-900 text-xs flex items-center gap-1.5">
+                    <span className={`w-2.5 h-2.5 rounded-full ${settings.isOpen !== false ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                    <span>حالة المتجر واستقبال الطلبات (Store Status)</span>
+                  </h4>
+                  <p className="text-[11px] text-stone-500 mt-0.5">
+                    عند إغلاق المتجر، يمكن للزبائن تصفح المنتجات ولكن يتم تعطيل إتمام الطلبات مع عرض رسالة الإغلاق.
+                  </p>
+                </div>
+
+                {/* Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, isOpen: settings.isOpen === false ? true : false })}
+                  className={`px-4 py-2 rounded-xl font-black text-xs cursor-pointer flex items-center gap-2 transition-all shadow-xs ${
+                    settings.isOpen !== false
+                      ? 'bg-emerald-800 text-white hover:bg-emerald-900'
+                      : 'bg-rose-600 text-white hover:bg-rose-700'
+                  }`}
+                >
+                  {settings.isOpen !== false ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>المتجر مفتوح الآن (Open)</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="w-4 h-4" />
+                      <span>المتجر مغلق (Closed)</span>
+                    </>
+                  )}
+                </button>
               </div>
-              <div className="space-y-1">
-                <label className="font-bold text-stone-700">رقم هاتف المتجر</label>
-                <input
-                  type="text"
-                  value={settings.contactPhone}
-                  onChange={(e) => setSettings({ ...settings, contactPhone: e.target.value })}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-sans"
-                />
+
+              {/* Closed Store Custom Messages */}
+              {settings.isOpen === false && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-stone-200 animate-in fade-in duration-200">
+                  <div className="space-y-1">
+                    <label className="font-bold text-stone-700">رسالة الإغلاق للعميل (بالعربية)</label>
+                    <textarea
+                      rows={2}
+                      value={settings.closedMessageAr || ''}
+                      onChange={(e) => setSettings({ ...settings, closedMessageAr: e.target.value })}
+                      placeholder="المتجر مغلق حاليًا لاستقبال الطلبات الجديدة..."
+                      className="w-full bg-white border border-stone-200 rounded-xl p-2.5 text-xs focus:bg-white focus:border-emerald-700 focus:outline-hidden resize-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-stone-700">رسالة الإغلاق (بالألمانية / German)</label>
+                    <textarea
+                      rows={2}
+                      value={settings.closedMessageDe || ''}
+                      onChange={(e) => setSettings({ ...settings, closedMessageDe: e.target.value })}
+                      placeholder="Derzeit geschlossen. Sie können Produkte durchsuchen..."
+                      className="w-full bg-white border border-stone-200 rounded-xl p-2.5 text-xs focus:bg-white focus:border-emerald-700 focus:outline-hidden resize-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Section 2: Delivery & Orders Thresholds */}
+            <div className="bg-stone-50/80 p-4 rounded-2xl border border-stone-200/80 space-y-3">
+              <h4 className="font-bold text-stone-900 text-xs flex items-center gap-1.5">
+                <DollarSign className="w-4 h-4 text-emerald-800" />
+                <span>إعدادات التوصيل والحدود المالية للطلبات (Delivery & Orders)</span>
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700">رسوم التوصيل الافتراضية (€)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={settings.deliveryFee !== undefined ? settings.deliveryFee : 2.50}
+                    onChange={(e) => setSettings({ ...settings, deliveryFee: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-white border border-stone-200 rounded-xl p-2.5 font-sans font-bold"
+                  />
+                  <p className="text-[10px] text-stone-400">تضاف تلقائياً للسلة عند عدم بلوغ حد الشحن المجاني</p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700">حد التوصيل المجاني (€)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={settings.freeDeliveryThreshold !== undefined ? settings.freeDeliveryThreshold : 50.00}
+                    onChange={(e) => setSettings({ ...settings, freeDeliveryThreshold: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-white border border-stone-200 rounded-xl p-2.5 font-sans font-bold text-emerald-800"
+                  />
+                  <p className="text-[10px] text-stone-400">الطلبات فوق هذا المبلغ تحصل على توصيل مجاني</p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700">الحد الأدنى لقيمة الطلب (€)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={settings.minOrderAmount !== undefined ? settings.minOrderAmount : 15.00}
+                    onChange={(e) => setSettings({ ...settings, minOrderAmount: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-white border border-stone-200 rounded-xl p-2.5 font-sans font-bold text-amber-900"
+                  />
+                  <p className="text-[10px] text-stone-400">لا يمكن للزبون إتمام الطلب بمجموع سلة أقل من هذا</p>
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="space-y-1">
-                <label className="font-bold text-stone-700">رسوم التوصيل الافتراضية (€)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={settings.deliveryFee}
-                  onChange={(e) => setSettings({ ...settings, deliveryFee: parseFloat(e.target.value) || 0 })}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-sans font-bold"
-                />
+            {/* Section 3: Payment Methods Configuration */}
+            <div className="bg-stone-50/80 p-4 rounded-2xl border border-stone-200/80 space-y-3">
+              <h4 className="font-bold text-stone-900 text-xs flex items-center gap-1.5">
+                <Ticket className="w-4 h-4 text-emerald-800" />
+                <span>طرق الدفع المتاحة في السلة (Payment Methods)</span>
+              </h4>
+              <p className="text-[11px] text-stone-500">
+                حدد طرق الدفع التي تظهر للزبائن عند إتمام الشراء في التطبيق.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                {/* Cash on Delivery */}
+                <div 
+                  onClick={() => setSettings({
+                    ...settings,
+                    paymentMethods: {
+                      ...settings.paymentMethods,
+                      cash_on_delivery: settings.paymentMethods?.cash_on_delivery === false ? true : false
+                    }
+                  })}
+                  className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
+                    settings.paymentMethods?.cash_on_delivery !== false
+                      ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950 shadow-2xs'
+                      : 'bg-white border-stone-200 text-stone-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-base">💵</span>
+                    <div>
+                      <div className="font-bold text-xs">الدفع عند الاستلام</div>
+                      <div className="text-[10px] text-stone-500">Cash on Delivery</div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.paymentMethods?.cash_on_delivery !== false}
+                    onChange={() => {}}
+                    className="w-4 h-4 accent-emerald-800 rounded-sm cursor-pointer"
+                  />
+                </div>
+
+                {/* Bank Transfer */}
+                <div 
+                  onClick={() => setSettings({
+                    ...settings,
+                    paymentMethods: {
+                      ...settings.paymentMethods,
+                      bank_transfer: settings.paymentMethods?.bank_transfer === false ? true : false
+                    }
+                  })}
+                  className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
+                    settings.paymentMethods?.bank_transfer !== false
+                      ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950 shadow-2xs'
+                      : 'bg-white border-stone-200 text-stone-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-base">🏦</span>
+                    <div>
+                      <div className="font-bold text-xs">التحويل البنكي المباشر</div>
+                      <div className="text-[10px] text-stone-500">Bank Transfer (Überweisung)</div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.paymentMethods?.bank_transfer !== false}
+                    onChange={() => {}}
+                    className="w-4 h-4 accent-emerald-800 rounded-sm cursor-pointer"
+                  />
+                </div>
+
+                {/* Card Payment */}
+                <div 
+                  onClick={() => setSettings({
+                    ...settings,
+                    paymentMethods: {
+                      ...settings.paymentMethods,
+                      card: settings.paymentMethods?.card === false ? true : false
+                    }
+                  })}
+                  className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
+                    settings.paymentMethods?.card !== false
+                      ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950 shadow-2xs'
+                      : 'bg-white border-stone-200 text-stone-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-base">💳</span>
+                    <div>
+                      <div className="font-bold text-xs">الدفع الإلكتروني بالبطاقة</div>
+                      <div className="text-[10px] text-stone-500">Credit / Debit Card</div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.paymentMethods?.card !== false}
+                    onChange={() => {}}
+                    className="w-4 h-4 accent-emerald-800 rounded-sm cursor-pointer"
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="font-bold text-stone-700">حد التوصيل المجاني (€)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={settings.freeDeliveryThreshold}
-                  onChange={(e) => setSettings({ ...settings, freeDeliveryThreshold: parseFloat(e.target.value) || 0 })}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-sans font-bold text-emerald-800"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="font-bold text-stone-700">الحد الأدنى للطلب (€)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={settings.minOrderAmount}
-                  onChange={(e) => setSettings({ ...settings, minOrderAmount: parseFloat(e.target.value) || 0 })}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-sans font-bold"
-                />
-              </div>
+
+              {/* Bank Transfer Details Settings */}
+              {settings.paymentMethods?.bank_transfer !== false && (
+                <div className="mt-3 p-3 bg-white rounded-xl border border-stone-200 space-y-2">
+                  <div className="font-bold text-stone-800 text-[11px]">بيانات الحساب البنكي لتحويل الزبائن:</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-[10px] text-stone-500 font-bold">اسم البنك</label>
+                      <input
+                        type="text"
+                        value={settings.bankDetails?.bankName || ''}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          bankDetails: { ...(settings.bankDetails || { bankName: '', accountHolder: '', iban: '' }), bankName: e.target.value }
+                        })}
+                        placeholder="Sparkasse"
+                        className="w-full bg-stone-50 border border-stone-200 rounded-lg p-1.5 text-xs font-sans"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-stone-500 font-bold">اسم صاحب الحساب</label>
+                      <input
+                        type="text"
+                        value={settings.bankDetails?.accountHolder || ''}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          bankDetails: { ...(settings.bankDetails || { bankName: '', accountHolder: '', iban: '' }), accountHolder: e.target.value }
+                        })}
+                        placeholder="Baraka Markt 24 GmbH"
+                        className="w-full bg-stone-50 border border-stone-200 rounded-lg p-1.5 text-xs font-sans"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-stone-500 font-bold">رقم الآيبان (IBAN)</label>
+                      <input
+                        type="text"
+                        value={settings.bankDetails?.iban || ''}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          bankDetails: { ...(settings.bankDetails || { bankName: '', accountHolder: '', iban: '' }), iban: e.target.value }
+                        })}
+                        placeholder="DE89 ..."
+                        className="w-full bg-stone-50 border border-stone-200 rounded-lg p-1.5 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="space-y-1">
-              <label className="font-bold text-stone-700">شريط الإعلان أعلى الموقع</label>
-              <input
-                type="text"
-                value={settings.announcementText}
-                onChange={(e) => setSettings({ ...settings, announcementText: e.target.value })}
-                className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-medium"
-              />
+            {/* Section 4: General Store Info */}
+            <div className="bg-stone-50/80 p-4 rounded-2xl border border-stone-200/80 space-y-3">
+              <h4 className="font-bold text-stone-900 text-xs flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-emerald-800" />
+                <span>معلومات المتجر العامة وشريط الإعلان</span>
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700">اسم المتجر بالعربية</label>
+                  <input
+                    type="text"
+                    value={settings.storeNameAr}
+                    onChange={(e) => setSettings({ ...settings, storeNameAr: e.target.value })}
+                    className="w-full bg-white border border-stone-200 rounded-xl p-2.5 font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700">رقم هاتف المتجر / خدمة العملاء</label>
+                  <input
+                    type="text"
+                    value={settings.contactPhone}
+                    onChange={(e) => setSettings({ ...settings, contactPhone: e.target.value })}
+                    className="w-full bg-white border border-stone-200 rounded-xl p-2.5 font-sans"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-stone-700">شريط الإعلان أعلى التطبيق (Announcement Banner)</label>
+                <input
+                  type="text"
+                  value={settings.announcementText}
+                  onChange={(e) => setSettings({ ...settings, announcementText: e.target.value })}
+                  className="w-full bg-white border border-stone-200 rounded-xl p-2.5 font-medium"
+                />
+              </div>
             </div>
 
             <button
               type="submit"
               disabled={isSavingSettings}
-              className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold px-6 py-2.5 rounded-xl cursor-pointer flex items-center gap-1.5 shadow-xs"
+              className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold px-7 py-3 rounded-2xl cursor-pointer flex items-center gap-2 shadow-sm transition-all text-xs sm:text-sm active:scale-98 disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
-              <span>{isSavingSettings ? 'جاري الحفظ في Firestore...' : 'حفظ الإعدادات في Firebase'}</span>
+              <span>{isSavingSettings ? 'جاري الحفظ في Firestore...' : 'حفظ ونشر الإعدادات في Firebase'}</span>
             </button>
           </form>
         </div>
@@ -1671,7 +2295,7 @@ export const AdminDashboardScreen: React.FC = () => {
 
             <form onSubmit={handleSaveProduct} className="space-y-4 text-xs">
               <div className="space-y-3 bg-stone-50/70 p-3.5 rounded-2xl border border-stone-100">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="space-y-1">
                     <label className="font-bold text-stone-700">اسم المنتج بالعربية (إجباري) *</label>
                     <input
@@ -1681,6 +2305,17 @@ export const AdminDashboardScreen: React.FC = () => {
                       value={prodName}
                       onChange={(e) => setProdName(e.target.value)}
                       className="w-full bg-white border border-stone-200 rounded-xl p-2.5 focus:border-emerald-700 outline-hidden font-bold"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-stone-700">الاسم بالألمانية (اختياري)</label>
+                    <input
+                      type="text"
+                      placeholder="z.B. Premium Halloumi Käse"
+                      value={prodNameDe}
+                      onChange={(e) => setProdNameDe(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded-xl p-2.5 focus:border-emerald-700 outline-hidden font-sans"
                     />
                   </div>
 
@@ -1942,24 +2577,74 @@ export const AdminDashboardScreen: React.FC = () => {
 
             <form onSubmit={handleSaveCategory} className="space-y-3 text-xs">
               <div className="space-y-1">
-                <label className="font-bold text-stone-700">اسم القسم بالعربية *</label>
+                <label className="font-bold text-stone-700">اسم القسم بالعربية (إجباري) *</label>
                 <input
                   type="text"
                   required
+                  placeholder="مثال: الأجبان والألبان البلدية"
                   value={catName}
                   onChange={(e) => setCatName(e.target.value)}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-bold"
+                  className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-bold focus:border-emerald-700 outline-hidden"
                 />
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700">الاسم بالألمانية (اختياري)</label>
+                  <input
+                    type="text"
+                    placeholder="z.B. Milch & Käseprodukte"
+                    value={catNameDe}
+                    onChange={(e) => setCatNameDe(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-sans focus:border-emerald-700 outline-hidden"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700">الاسم بالإنجليزية (اختياري)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Dairy & Cheese"
+                    value={catNameEn}
+                    onChange={(e) => setCatNameEn(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-sans focus:border-emerald-700 outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700">رقم الترتيب (Sort Order)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={catSortOrder}
+                    onChange={(e) => setCatSortOrder(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-mono font-bold focus:border-emerald-700 outline-hidden"
+                  />
+                </div>
+
+                <div className="space-y-1 flex flex-col justify-end">
+                  <label className="flex items-center gap-2 cursor-pointer bg-stone-50 p-2.5 rounded-xl border border-stone-200">
+                    <input
+                      type="checkbox"
+                      checked={catIsActive}
+                      onChange={(e) => setCatIsActive(e.target.checked)}
+                      className="w-4 h-4 text-emerald-700 accent-emerald-700 rounded-sm cursor-pointer"
+                    />
+                    <span className="font-bold text-stone-700 text-[11px]">تفعيل القسم للعملاء (نشط)</span>
+                  </label>
+                </div>
+              </div>
+
               <div className="space-y-1">
-                <label className="font-bold text-stone-700">صورة القسم (رابط أو رفع)</label>
+                <label className="font-bold text-stone-700">صورة القسم (رابط أو رفع من جهازك)</label>
                 <div className="flex gap-2">
                   <input
                     type="url"
                     value={catImage}
                     onChange={(e) => setCatImage(e.target.value)}
-                    className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-sans text-[11px]"
+                    className="w-full bg-stone-50 border border-stone-200 rounded-xl p-2.5 font-sans text-[11px] focus:border-emerald-700 outline-hidden"
                   />
                   <label className="bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold px-3 py-2 rounded-xl flex items-center gap-1 cursor-pointer shrink-0">
                     <Upload className="w-3.5 h-3.5" />
@@ -1973,19 +2658,25 @@ export const AdminDashboardScreen: React.FC = () => {
                     />
                   </label>
                 </div>
+                {catImage && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <img src={catImage} alt="Preview" className="w-10 h-10 rounded-lg object-cover border border-stone-200" />
+                    <span className="text-[10px] text-stone-500">معاينة صورة القسم</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="submit"
-                  className="flex-1 bg-emerald-800 text-white font-bold py-2.5 rounded-xl cursor-pointer"
+                  className="flex-1 bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-2.5 rounded-xl cursor-pointer shadow-xs"
                 >
-                  حفظ القسم
+                  {editingCategory ? 'حفظ تعديلات القسم' : 'إضافة القسم إلى Firestore'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsCategoryModalOpen(false)}
-                  className="px-4 py-2.5 bg-stone-100 text-stone-700 font-bold rounded-xl"
+                  className="px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-xl cursor-pointer"
                 >
                   إلغاء
                 </button>
