@@ -325,9 +325,15 @@ export const ProductDetailScreen: React.FC = () => {
               <Info className="w-4 h-4 text-emerald-800" />
               <span>وصف ومميزات المنتج:</span>
             </h3>
-            <p className="text-xs text-stone-600 leading-relaxed">
-              {product.descriptionAr || product.description || 'منتج بلدي سوري فاخر محضر ومختار بعناية وفق أعلى معايير الجودة والأصالة.'}
+            <p className="text-xs text-stone-600 leading-relaxed whitespace-pre-line">
+              {product.descriptionAr || product.description || product.descriptionDe || product.descriptionEn || 'منتج بلدي سوري فاخر محضر ومختار بعناية وفق أعلى معايير الجودة والأصالة.'}
             </p>
+            {product.descriptionDe && product.descriptionDe !== (product.descriptionAr || product.description) && (
+              <p className="text-[11px] text-stone-500 font-sans mt-2 pt-2 border-t border-stone-100/80 leading-relaxed" dir="ltr">
+                <span className="font-bold text-stone-700 block mb-0.5">Beschreibung (DE):</span>
+                {product.descriptionDe}
+              </p>
+            )}
           </div>
 
           {product.ingredientsAr && (

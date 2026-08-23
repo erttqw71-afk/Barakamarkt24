@@ -161,12 +161,21 @@ export interface CustomerOrderInfo {
 }
 
 export type OrderStatus = 
+  | 'received'
   | 'pending'
   | 'confirmed'
   | 'preparing'
+  | 'on_the_way'
   | 'out_for_delivery'
   | 'delivered'
   | 'cancelled';
+
+export interface OrderTimelineItem {
+  status: OrderStatus;
+  labelAr: string;
+  timestamp: string;
+  note?: string;
+}
 
 export interface Order {
   id: string;
@@ -187,6 +196,7 @@ export interface Order {
   updatedAt?: string;
   timestamp?: string;
   notes?: string;
+  timeline?: OrderTimelineItem[];
   customerInfo?: CustomerOrderInfo;
   paymentMethod?: PaymentMethod | string;
   paymentStatus?: PaymentStatus | string;

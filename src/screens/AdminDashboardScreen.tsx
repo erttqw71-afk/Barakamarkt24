@@ -231,6 +231,8 @@ export const AdminDashboardScreen: React.FC = () => {
   const [prodNameEn, setProdNameEn] = useState('');
   const [prodNameDe, setProdNameDe] = useState('');
   const [prodDesc, setProdDesc] = useState('');
+  const [prodDescDe, setProdDescDe] = useState('');
+  const [prodDescEn, setProdDescEn] = useState('');
   const [prodPrice, setProdPrice] = useState('');
   const [prodOldPrice, setProdOldPrice] = useState('');
   const [prodDiscount, setProdDiscount] = useState('');
@@ -346,16 +348,18 @@ export const AdminDashboardScreen: React.FC = () => {
   // ===================================
   // --- Orders Handlers ---
   // ===================================
-  const handleUpdateOrderStatus = async (orderId: string, newStatus: OrderStatus) => {
-    const success = await orderService.updateOrderStatus(orderId, newStatus);
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: OrderStatus, customNote?: string) => {
+    const success = await orderService.updateOrderStatus(orderId, newStatus, customNote);
     if (success) {
       setOrders(prev => prev.map(o => (o.id === orderId || o.orderId === orderId) ? { ...o, status: newStatus } : o));
       const statusNames: Record<OrderStatus, string> = {
+        received: 'تم الاستلام',
         pending: 'قيد الانتظار',
         confirmed: 'تم التأكيد',
-        preparing: 'قيد التجهيز',
-        out_for_delivery: 'جاري التوصيل',
-        delivered: 'تم التوصيل',
+        preparing: 'قيد التحضير',
+        on_the_way: 'في الطريق',
+        out_for_delivery: 'في الطريق',
+        delivered: 'تم التسليم',
         cancelled: 'ملغي'
       };
       showToast(`تم تغيير حالة الطلب #${orderId} إلى "${statusNames[newStatus] || newStatus}" بنجاح في Firestore`);
@@ -534,6 +538,8 @@ export const AdminDashboardScreen: React.FC = () => {
     setProdNameEn('');
     setProdNameDe('');
     setProdDesc('');
+    setProdDescDe('');
+    setProdDescEn('');
     setProdPrice('');
     setProdOldPrice('');
     setProdDiscount('');
@@ -562,6 +568,8 @@ export const AdminDashboardScreen: React.FC = () => {
     setProdNameEn(p.nameEn || '');
     setProdNameDe(p.nameDe || '');
     setProdDesc(p.descriptionAr || p.description || '');
+    setProdDescDe(p.descriptionDe || '');
+    setProdDescEn(p.descriptionEn || '');
     setProdPrice(p.price.toString());
     setProdOldPrice(p.oldPrice ? p.oldPrice.toString() : (p.originalPrice ? p.originalPrice.toString() : ''));
     setProdDiscount(p.discount ? p.discount.toString() : '');
@@ -631,6 +639,8 @@ export const AdminDashboardScreen: React.FC = () => {
       nameDe: prodNameDe.trim() || undefined,
       description: prodDesc.trim() || 'منتج بلدي سوري فاخر من خيرات الطبيعة',
       descriptionAr: prodDesc.trim() || 'منتج بلدي سوري فاخر من خيرات الطبيعة',
+      descriptionDe: prodDescDe.trim() || undefined,
+      descriptionEn: prodDescEn.trim() || undefined,
       price,
       oldPrice,
       originalPrice: oldPrice,
@@ -1428,27 +1438,35 @@ export const AdminDashboardScreen: React.FC = () => {
           <div className="flex bg-stone-100 p-1 rounded-2xl border border-stone-200/80 text-xs font-bold overflow-x-auto no-scrollbar gap-1">
             {[
               { id: 'all', label: `الكل (${orders.length})` },
-              { id: 'pending', label: `قيد الانتظار (${orders.filter(o => o.status === 'pending').length})` },
+              { id: 'received', label: `جديد/استلام (${orders.filter(o => o.status === 'received' || o.status === 'pending').length})` },
               { id: 'confirmed', label: `مؤكد (${orders.filter(o => o.status === 'confirmed').length})` },
-              { id: 'preparing', label: `قيد التجهيز (${orders.filter(o => o.status === 'preparing').length})` },
-              { id: 'out_for_delivery', label: `جاري التوصيل (${orders.filter(o => o.status === 'out_for_delivery').length})` },
-              { id: 'delivered', label: `تم التوصيل (${orders.filter(o => o.status === 'delivered').length})` },
+              { id: 'preparing', label: `تحضير (${orders.filter(o => o.status === 'preparing').length})` },
+              { id: 'on_the_way', label: `في الطريق (${orders.filter(o => o.status === 'on_the_way' || o.status === 'out_for_delivery').length})` },
+              { id: 'delivered', label: `تم التسليم (${orders.filter(o => o.status === 'delivered').length})` },
               { id: 'cancelled', label: `ملغي (${orders.filter(o => o.status === 'cancelled').length})` }
-            ].map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setOrderStatusFilter(f.id)}
-                className={`py-1.5 px-3 rounded-xl whitespace-nowrap transition-all cursor-pointer ${
-                  orderStatusFilter === f.id ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-500 hover:text-stone-800'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
+            ].map((f) => {
+              const isActive = orderStatusFilter === f.id;
+              return (
+                <button
+                  key={f.id}
+                  onClick={() => setOrderStatusFilter(f.id)}
+                  className={`py-1.5 px-3 rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+                    isActive ? 'bg-white text-stone-900 shadow-xs font-black' : 'text-stone-500 hover:text-stone-800'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
           </div>
 
           {/* Orders List */}
-          {orders.filter(o => orderStatusFilter === 'all' || o.status === orderStatusFilter).length === 0 ? (
+          {orders.filter(o => {
+            if (orderStatusFilter === 'all') return true;
+            if (orderStatusFilter === 'received') return o.status === 'received' || o.status === 'pending';
+            if (orderStatusFilter === 'on_the_way') return o.status === 'on_the_way' || o.status === 'out_for_delivery';
+            return o.status === orderStatusFilter;
+          }).length === 0 ? (
             <div className="py-12 text-center bg-white rounded-3xl border border-stone-200/80 p-6 space-y-2">
               <ShoppingBag className="w-10 h-10 text-stone-300 mx-auto" />
               <p className="text-xs font-bold text-stone-600">لا توجد طلبات مسجلة تحت هذا الفلتر</p>
@@ -1456,8 +1474,25 @@ export const AdminDashboardScreen: React.FC = () => {
           ) : (
             <div className="space-y-3">
               {orders
-                .filter(o => orderStatusFilter === 'all' || o.status === orderStatusFilter)
+                .filter(o => {
+                  if (orderStatusFilter === 'all') return true;
+                  if (orderStatusFilter === 'received') return o.status === 'received' || o.status === 'pending';
+                  if (orderStatusFilter === 'on_the_way') return o.status === 'on_the_way' || o.status === 'out_for_delivery';
+                  return o.status === orderStatusFilter;
+                })
                 .map((ord) => {
+                  const statusBadges: Record<OrderStatus, { label: string; cls: string }> = {
+                    received: { label: 'تم الاستلام', cls: 'bg-amber-50 text-amber-900 border-amber-200' },
+                    pending: { label: 'قيد الانتظار', cls: 'bg-amber-50 text-amber-900 border-amber-200' },
+                    confirmed: { label: 'تم التأكيد', cls: 'bg-blue-50 text-blue-900 border-blue-200' },
+                    preparing: { label: 'قيد التحضير', cls: 'bg-purple-50 text-purple-900 border-purple-200' },
+                    on_the_way: { label: 'في الطريق', cls: 'bg-cyan-50 text-cyan-900 border-cyan-200' },
+                    out_for_delivery: { label: 'في الطريق', cls: 'bg-cyan-50 text-cyan-900 border-cyan-200' },
+                    delivered: { label: 'تم التسليم', cls: 'bg-emerald-50 text-emerald-900 border-emerald-200' },
+                    cancelled: { label: 'ملغي', cls: 'bg-rose-50 text-rose-900 border-rose-200' }
+                  };
+                  const badge = statusBadges[ord.status] || { label: ord.status, cls: 'bg-stone-100 text-stone-700 border-stone-200' };
+
                   return (
                     <div 
                       key={ord.id}
@@ -1468,8 +1503,9 @@ export const AdminDashboardScreen: React.FC = () => {
                           <span className="font-mono text-xs font-black text-stone-900 bg-stone-100 px-2 py-0.5 rounded-lg border border-stone-200">
                             #{ord.orderId || ord.id}
                           </span>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-50 text-amber-900 border-amber-200">
-                            {ord.status}
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ${badge.cls}`}>
+                            <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                            <span>{badge.label}</span>
                           </span>
                         </div>
 
@@ -1538,22 +1574,87 @@ export const AdminDashboardScreen: React.FC = () => {
                         ))}
                       </div>
 
-                      {/* Change Status Dropdown */}
+                      {/* Quick Next-Step Actions */}
+                      <div className="bg-stone-50 p-2.5 rounded-2xl border border-stone-200/60 flex items-center justify-between flex-wrap gap-2">
+                        <span className="text-[11px] font-bold text-stone-700 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-800" />
+                          <span>إجراء سريع للمرحلة التالية:</span>
+                        </span>
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {(ord.status === 'received' || ord.status === 'pending') && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderStatus(ord.id, 'confirmed', 'تم تأكيد الطلب من قبل الإدارة')}
+                              className="text-xs font-bold px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-xl cursor-pointer shadow-xs transition-all flex items-center gap-1"
+                            >
+                              <span>تأكيد الطلب ✓</span>
+                            </button>
+                          )}
+
+                          {ord.status === 'confirmed' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderStatus(ord.id, 'preparing', 'تم بدء تجهيز وتغليف المنتجات')}
+                              className="text-xs font-bold px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-xl cursor-pointer shadow-xs transition-all flex items-center gap-1"
+                            >
+                              <span>بدء التحضير 📦</span>
+                            </button>
+                          )}
+
+                          {ord.status === 'preparing' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderStatus(ord.id, 'on_the_way', 'تم تسليم الشحنة لمندوب التوصيل وهي في الطريق')}
+                              className="text-xs font-bold px-3 py-1.5 bg-cyan-700 hover:bg-cyan-800 text-white rounded-xl cursor-pointer shadow-xs transition-all flex items-center gap-1"
+                            >
+                              <span>تسليم للمندوب 🚚</span>
+                            </button>
+                          )}
+
+                          {(ord.status === 'on_the_way' || ord.status === 'out_for_delivery') && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderStatus(ord.id, 'delivered', 'تم تسليم الطلب للعميل بنجاح')}
+                              className="text-xs font-bold px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl cursor-pointer shadow-xs transition-all flex items-center gap-1"
+                            >
+                              <span>تأكيد التسليم للعميل 🎉</span>
+                            </button>
+                          )}
+
+                          {ord.status !== 'delivered' && ord.status !== 'cancelled' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`هل أنت متأكد من إلغاء الطلب #${ord.orderId || ord.id}؟`)) {
+                                  handleUpdateOrderStatus(ord.id, 'cancelled', 'تم إلغاء الطلب من قبل الإدارة');
+                                }
+                              }}
+                              className="text-xs font-bold px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl cursor-pointer transition-all flex items-center gap-1"
+                            >
+                              <span>إلغاء ✖</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Manual Change Status Dropdown */}
                       <div className="pt-2 border-t border-stone-100 flex items-center justify-between flex-wrap gap-2">
                         <label className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
                           <Edit3 className="w-3.5 h-3.5 text-emerald-800" />
-                          <span>تغيير حالة الطلب في Firestore:</span>
+                          <span>تحديد الحالة يدوياً في Firestore:</span>
                         </label>
                         <select
                           value={ord.status}
                           onChange={(e) => handleUpdateOrderStatus(ord.id, e.target.value as OrderStatus)}
                           className="bg-stone-50 border border-stone-200 rounded-xl px-3 py-1.5 text-xs font-bold text-stone-900 focus:bg-white focus:border-emerald-700 outline-hidden cursor-pointer"
                         >
+                          <option value="received">⏳ تم الاستلام (received)</option>
                           <option value="pending">⏳ قيد الانتظار (pending)</option>
                           <option value="confirmed">✓ تم التأكيد (confirmed)</option>
-                          <option value="preparing">📦 قيد التجهيز (preparing)</option>
-                          <option value="out_for_delivery">🚚 جاري التوصيل (out_for_delivery)</option>
-                          <option value="delivered">🎉 تم التوصيل (delivered)</option>
+                          <option value="preparing">📦 قيد التحضير (preparing)</option>
+                          <option value="on_the_way">🚚 في الطريق (on_the_way)</option>
+                          <option value="delivered">🎉 تم التسليم (delivered)</option>
                           <option value="cancelled">✖ ملغي (cancelled)</option>
                         </select>
                       </div>
@@ -2456,6 +2557,103 @@ export const AdminDashboardScreen: React.FC = () => {
                       value={prodOrigin}
                       onChange={(e) => setProdOrigin(e.target.value)}
                       className="w-full bg-white border border-stone-200 rounded-xl p-2.5"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Product Description, Ingredients & Storage Info */}
+              <div className="space-y-3 bg-stone-50/70 p-3.5 rounded-2xl border border-stone-100">
+                <div className="space-y-1">
+                  <label className="font-bold text-stone-700 flex items-center justify-between">
+                    <span>وصف المنتج ومميزاته بالعربية (Description Ar) *</span>
+                    <span className="text-[10px] text-stone-400 font-normal">يظهر في صفحة تفاصيل المنتج للعميل</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="مثال: جبنة حلوم بلدية مشللة محضرة على الطريقة الشامية التقليدية من الحليب الطازج وحبة البركة..."
+                    value={prodDesc}
+                    onChange={(e) => setProdDesc(e.target.value)}
+                    className="w-full bg-white border border-stone-200 rounded-xl p-2.5 focus:border-emerald-700 outline-hidden font-medium text-xs leading-relaxed"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="font-bold text-stone-700">الوصف بالألمانية (Description De - اختياري)</label>
+                    <textarea
+                      rows={2}
+                      placeholder="z.B. Traditioneller syrischer Halloumi-Käse nach originalem Rezept..."
+                      value={prodDescDe}
+                      onChange={(e) => setProdDescDe(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded-xl p-2.5 focus:border-emerald-700 outline-hidden font-sans text-xs leading-relaxed"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-stone-700">الوصف بالإنجليزية (Description En - اختياري)</label>
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Traditional Syrian Halloumi cheese made with fresh milk..."
+                      value={prodDescEn}
+                      onChange={(e) => setProdDescEn(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded-xl p-2.5 focus:border-emerald-700 outline-hidden font-sans text-xs leading-relaxed"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="font-bold text-stone-700">المكونات (Ingredients - اختياري)</label>
+                    <input
+                      type="text"
+                      placeholder="مثال: حليب بقري، ملح طعام، حبة البركة، محلب"
+                      value={prodIngredients}
+                      onChange={(e) => setProdIngredients(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded-xl p-2.5 text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-stone-700">طريقة الحفظ (Storage - اختياري)</label>
+                    <input
+                      type="text"
+                      placeholder="مثال: يُحفظ في الثلاجة بين درجة حرارة 2-6 مئوية"
+                      value={prodStorage}
+                      onChange={(e) => setProdStorage(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded-xl p-2.5 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-stone-200/60">
+                  <label className="flex items-center gap-2 bg-white p-2.5 rounded-xl border border-stone-200 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={prodIsFeatured} 
+                      onChange={(e) => setProdIsFeatured(e.target.checked)}
+                      className="w-4 h-4 text-emerald-800 rounded-sm"
+                    />
+                    <span className="font-bold text-stone-800 text-xs">تمييز كمنتج مميز (Featured)</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 bg-white p-2.5 rounded-xl border border-stone-200 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={prodIsBestseller} 
+                      onChange={(e) => setProdIsBestseller(e.target.checked)}
+                      className="w-4 h-4 text-emerald-800 rounded-sm"
+                    />
+                    <span className="font-bold text-stone-800 text-xs">الأكثر مبيعاً (Bestseller)</span>
+                  </label>
+
+                  <div className="space-y-1">
+                    <input
+                      type="text"
+                      placeholder="شارة مخصصة (مثال: الأكثر طلباً)"
+                      value={prodBadge}
+                      onChange={(e) => setProdBadge(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded-xl p-2.5 text-xs font-bold"
                     />
                   </div>
                 </div>

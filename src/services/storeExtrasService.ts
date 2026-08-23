@@ -142,18 +142,9 @@ class StoreExtrasService {
           .filter(o => o.active);
       }
     } catch (e) {
-      console.warn('Error getting offers:', e);
+      console.warn('Error getting offers from Firestore:', e);
     }
-    return [
-      {
-        id: 'offer-1',
-        titleAr: 'عروض المؤونة والضيافة الشامية',
-        subtitleAr: 'توصيل مجاني لكافة الطلبات فوق 50€ لجميع المدن الألمانية',
-        image: 'https://images.unsplash.com/photo-1541256942802-7b2996a84f97?auto=format&fit=crop&w=1200&q=80',
-        discountTag: 'شحن مبرد مجاني',
-        active: true
-      }
-    ];
+    return [];
   }
 
   // --- Notifications Collection ---

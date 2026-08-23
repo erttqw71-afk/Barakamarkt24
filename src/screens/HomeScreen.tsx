@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { 
   Search, 
   Sparkles, 
@@ -13,7 +13,9 @@ import {
   Tag,
   ArrowRight,
   PackagePlus,
-  RefreshCw
+  RefreshCw,
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { ProductCard } from '../components/common/ProductCard';
@@ -21,6 +23,8 @@ import { ProductCardSkeleton, CategoryPillsSkeleton } from '../components/common
 import { EmptyState } from '../components/common/EmptyState';
 import { OptimizedImage } from '../components/common/OptimizedImage';
 import { FALLBACK_CATEGORY_IMAGE } from '../utils/imageOptimizer';
+import { orderService } from '../services/orderService';
+import { Order } from '../types';
 
 export const HomeScreen: React.FC = () => {
   const { 
@@ -33,7 +37,9 @@ export const HomeScreen: React.FC = () => {
     cartCount,
     currentUser,
     isLoadingProducts,
-    storeSettings
+    storeSettings,
+    currencySymbol,
+    reorderOrder
   } = useApp();
 
   // Selected quick filter pill for categories (or 'all')
@@ -41,6 +47,22 @@ export const HomeScreen: React.FC = () => {
   
   // Pagination / Limit for newly added / general products stream
   const [visibleNewCount, setVisibleNewCount] = useState<number>(8);
+
+  // Last delivered order for logged in customer
+  const [lastDeliveredOrder, setLastDeliveredOrder] = useState<Order | null>(null);
+
+  useEffect(() => {
+    if (currentUser?.id) {
+      const unsub = orderService.subscribeToOrders((userOrders) => {
+        const delivered = userOrders.find(o => o.status === 'delivered') || userOrders[0] || null;
+        setLastDeliveredOrder(delivered);
+      }, currentUser.id);
+
+      return () => unsub();
+    } else {
+      setLastDeliveredOrder(null);
+    }
+  }, [currentUser?.id]);
 
   // Filter active categories for display
   const activeCategories = useMemo(() => {
@@ -252,6 +274,65 @@ export const HomeScreen: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 4.1 Last Purchases Section for Logged-In Customer */}
+      {currentUser && lastDeliveredOrder && lastDeliveredOrder.items && lastDeliveredOrder.items.length > 0 && (
+        <div className="px-4">
+          <div className="bg-stone-900 text-white rounded-3xl p-4 shadow-sm space-y-3 border border-stone-800">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-800 text-amber-300 flex items-center justify-center shadow-2xs">
+                  <RotateCcw className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-black text-xs text-white">آخر مشترياتك</h3>
+                  <p className="text-[10px] text-stone-400">طلب #{lastDeliveredOrder.orderId || lastDeliveredOrder.id} • {lastDeliveredOrder.items.length} أصناف</p>
+                </div>
+              </div>
+              <button
+                onClick={() => reorderOrder(lastDeliveredOrder)}
+                className="bg-amber-400 hover:bg-amber-300 text-stone-950 text-[11px] font-black px-3 py-1.5 rounded-xl cursor-pointer shadow-xs active:scale-95 transition-all flex items-center gap-1.5"
+              >
+                <ShoppingBag className="w-3.5 h-3.5" />
+                <span>إعادة طلب الكل</span>
+              </button>
+            </div>
+
+            <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar">
+              {lastDeliveredOrder.items.slice(0, 6).map((item, idx) => {
+                const liveProduct = products.find(p => p.id === item.product?.id || p.productId === item.product?.id);
+                const displayPrice = liveProduct ? liveProduct.price : item.product?.price;
+                const isAvail = liveProduct ? (liveProduct.isAvailable !== false && liveProduct.inStock !== false) : true;
+
+                return (
+                  <div key={idx} className="bg-stone-800/80 rounded-2xl p-2 shrink-0 w-28 border border-stone-700/60 flex flex-col justify-between">
+                    <div className="relative w-full h-16 rounded-xl overflow-hidden mb-1.5 bg-stone-900">
+                      <img 
+                        src={item.product?.image || 'https://images.unsplash.com/photo-1552767059-ce182ead6c1b?auto=format&fit=crop&w=150&q=80'} 
+                        alt={item.product?.nameAr}
+                        className="w-full h-full object-cover"
+                      />
+                      {!isAvail && (
+                        <span className="absolute inset-0 bg-black/60 text-white text-[8px] font-bold flex items-center justify-center text-center p-1">
+                          غير متاح
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-stone-100 line-clamp-1 block">
+                        {item.product?.nameAr || item.product?.name}
+                      </span>
+                      <span className="text-[9px] text-amber-300 font-sans font-bold">
+                        {item.quantity} × {currencySymbol || '€'}{displayPrice?.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 5. Categories Section (Loaded dynamically from Firebase) */}
       <div className="space-y-2.5">

@@ -12,15 +12,30 @@ import {
   Unsubscribe
 } from 'firebase/firestore';
 import { db, collections } from './firebaseConfig';
-import { CartItem, Order, OrderItem, OrderStatus } from '../types';
+import { CartItem, Order, OrderItem, OrderStatus, OrderTimelineItem } from '../types';
+
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  received: 'تم استلام الطلب',
+  pending: 'قيد الانتظار',
+  confirmed: 'تم تأكيد الطلب',
+  preparing: 'قيد التجهيز والتغليف',
+  on_the_way: 'الطلب في الطريق مع المندوب',
+  out_for_delivery: 'الطلب في الطريق مع المندوب',
+  delivered: 'تم تسليم الطلب للعميل',
+  cancelled: 'تم إلغاء الطلب'
+};
 
 class OrderService {
   private localOrdersCache: Order[] = [];
 
-  // Subscribe to real-time changes in orders (for Admin live updates)
-  subscribeToOrders(callback: (orders: Order[]) => void): Unsubscribe {
+  // Subscribe to real-time changes in orders (for Admin or Customer live updates)
+  subscribeToOrders(callback: (orders: Order[]) => void, userId?: string): Unsubscribe {
     try {
-      const q = collections.orders;
+      let q = collections.orders;
+      if (userId && userId !== 'all') {
+        q = query(collections.orders, where('userId', '==', userId)) as any;
+      }
+
       return onSnapshot(q, (snapshot) => {
         const firestoreOrders = snapshot.docs.map(d => {
           const data = d.data() as any;
@@ -28,8 +43,10 @@ class OrderService {
             ...data,
             id: d.id,
             orderId: data.orderId || d.id,
+            status: data.status || 'received',
             paymentMethod: data.paymentMethod || 'cash_on_delivery',
-            paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending')
+            paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending'),
+            timeline: Array.isArray(data.timeline) ? data.timeline : []
           } as Order;
         });
 
@@ -41,7 +58,9 @@ class OrderService {
           return (b.createdAt || '').localeCompare(a.createdAt || '');
         });
 
-        this.localOrdersCache = firestoreOrders;
+        if (!userId || userId === 'all') {
+          this.localOrdersCache = firestoreOrders;
+        }
         callback(firestoreOrders);
       }, (err) => {
         console.warn('Realtime orders snapshot error:', err);
@@ -74,14 +93,25 @@ class OrderService {
       }
     }
 
+    const initialStatus = orderData.status || 'received';
+    const initialTimeline: OrderTimelineItem[] = [
+      {
+        status: initialStatus,
+        labelAr: ORDER_STATUS_LABELS[initialStatus] || 'تم استلام الطلب',
+        timestamp: formattedDate,
+        note: 'تم تسجيل طلبك بنجاح في متجر Barakamarkt24'
+      }
+    ];
+
     const newOrder: Order = {
       ...orderData,
       id: orderId,
       orderId: orderId,
       userId: orderData.userId || 'guest',
-      status: orderData.status || 'pending',
+      status: initialStatus,
       paymentMethod,
       paymentStatus,
+      timeline: initialTimeline,
       createdAt: formattedDate,
       updatedAt: formattedDate,
       timestamp: now.toISOString()
@@ -105,6 +135,7 @@ class OrderService {
         discount: newOrder.discount || 0,
         total: newOrder.total,
         status: newOrder.status,
+        timeline: newOrder.timeline,
         paymentMethod: newOrder.paymentMethod,
         paymentStatus: newOrder.paymentStatus,
         createdAt: newOrder.createdAt,
@@ -169,13 +200,18 @@ class OrderService {
             ...data,
             id: d.id,
             orderId: data.orderId || d.id,
+            status: data.status || 'received',
             paymentMethod: data.paymentMethod || 'cash_on_delivery',
-            paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending')
+            paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending'),
+            timeline: Array.isArray(data.timeline) ? data.timeline : []
           } as Order;
         });
 
         // Sort descending by timestamp or id
-        firestoreOrders.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        firestoreOrders.sort((a, b) => {
+          if (b.timestamp && a.timestamp) return b.timestamp.localeCompare(a.timestamp);
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+        });
 
         if (!userId || userId === 'all') {
           this.localOrdersCache = firestoreOrders;
@@ -203,8 +239,10 @@ class OrderService {
           ...data, 
           id: snap.id, 
           orderId: data.orderId || snap.id,
+          status: data.status || 'received',
           paymentMethod: data.paymentMethod || 'cash_on_delivery',
-          paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending')
+          paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending'),
+          timeline: Array.isArray(data.timeline) ? data.timeline : []
         } as Order;
       }
     } catch (e) {
@@ -216,10 +254,33 @@ class OrderService {
   }
 
   // Update order status in Firestore (Admin feature)
-  async updateOrderStatus(id: string, status: OrderStatus): Promise<boolean> {
+  async updateOrderStatus(id: string, status: OrderStatus, note?: string): Promise<boolean> {
+    const now = new Date();
+    const formattedDate = `${now.toLocaleDateString('ar-SY', { day: 'numeric', month: 'short', year: 'numeric' })} - ${now.toLocaleTimeString('ar-SY', { hour: '2-digit', minute: '2-digit' })}`;
+
+    const timelineEntry: OrderTimelineItem = {
+      status,
+      labelAr: ORDER_STATUS_LABELS[status] || status,
+      timestamp: formattedDate,
+      note: note || ''
+    };
+
     try {
       const docRef = doc(collections.orders, id);
-      await updateDoc(docRef, { status });
+      const orderDoc = await getDoc(docRef);
+      let existingTimeline: OrderTimelineItem[] = [];
+      if (orderDoc.exists()) {
+        const data = orderDoc.data() as any;
+        existingTimeline = Array.isArray(data.timeline) ? data.timeline : [];
+      }
+
+      const updatedTimeline = [...existingTimeline, timelineEntry];
+
+      await updateDoc(docRef, { 
+        status,
+        updatedAt: formattedDate,
+        timeline: updatedTimeline
+      });
     } catch (e) {
       console.warn('Error updating order status in Firestore:', e);
     }
@@ -227,9 +288,11 @@ class OrderService {
     const order = this.localOrdersCache.find(o => o.id === id || o.orderId === id);
     if (order) {
       order.status = status;
+      order.updatedAt = formattedDate;
+      order.timeline = [...(order.timeline || []), timelineEntry];
       return true;
     }
-    return false;
+    return true;
   }
 }
 

@@ -218,25 +218,7 @@ class AdminService {
     } catch (e) {
       console.warn('Error getting offers:', e);
     }
-    // Fallback seed offers
-    return [
-      {
-        id: 'offer-1',
-        titleAr: 'مؤونة رمضان وحلب المباركة',
-        subtitleAr: 'خصم حتى 30% على الأجبان، الزعتر، والمكدوس الأصلي',
-        image: 'https://images.unsplash.com/photo-1541544741938-0af808871cc0?auto=format&fit=crop&w=1200&q=80',
-        discountTag: '30% خصم',
-        active: true
-      },
-      {
-        id: 'offer-2',
-        titleAr: 'عروض الزيوت والسمن الحيواني',
-        subtitleAr: 'زيت زيتون بكر ع عصرة أولى وسمنة حموية أصيلة',
-        image: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?auto=format&fit=crop&w=1200&q=80',
-        discountTag: 'عرض خاص',
-        active: true
-      }
-    ];
+    return [];
   }
 
   async saveOffer(offer: Offer): Promise<boolean> {

@@ -23,7 +23,8 @@ import { referralService } from './referralService';
 export const ADMIN_EMAILS = [
   'admin@barakamarkt24.com',
   'admin@barakamarkt24.de',
-  'erttqw71@gmail.com'
+  'erttqw71@gmail.com',
+  'barakamarkt24@gmail.com'
 ];
 
 export const isSuperAdminEmail = (email?: string | null): boolean => {

@@ -6,7 +6,8 @@ import {
   Product, 
   Screen, 
   BottomNavTab, 
-  User 
+  User,
+  Order 
 } from '../types';
 import { productService } from '../services/productService';
 import { authService } from '../services/authService';
@@ -50,6 +51,7 @@ interface AppContextType {
   removeFromCart: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
+  reorderOrder: (order: Order) => void;
   cartCount: number;
   cartTotal: number;
 
@@ -203,28 +205,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Sync Wishlist with Firebase for Authenticated Users
   useEffect(() => {
     if (currentUser?.id && products.length > 0) {
-      favoriteService.syncFavoritesOnLogin(currentUser.id, wishlist).then((remoteProductIds) => {
+      favoriteService.getUserFavoriteProductIds(currentUser.id).then((remoteProductIds) => {
         if (remoteProductIds && remoteProductIds.length > 0) {
-          setWishlist(prev => {
-            const currentIds = new Set(prev.map(p => p.id));
-            const newFavorites = [...prev];
-            for (const pid of remoteProductIds) {
-              if (!currentIds.has(pid)) {
-                const foundProduct = products.find(p => p.id === pid);
-                if (foundProduct) {
-                  newFavorites.push(foundProduct);
-                  currentIds.add(pid);
-                }
-              }
-            }
-            return newFavorites;
-          });
+          const idSet = new Set(remoteProductIds);
+          // Only show existing, active products from Firebase
+          const activeFavorites = products.filter(p => 
+            (idSet.has(p.id) || idSet.has(p.productId || '')) && p.isAvailable !== false
+          );
+          setWishlist(activeFavorites);
+        } else {
+          setWishlist([]);
         }
       }).catch(err => {
-        console.warn('Error synchronizing favorites on auth update:', err);
+        console.warn('Error fetching favorites for user:', err);
       });
+    } else if (!currentUser?.id) {
+      setWishlist([]);
+      try {
+        localStorage.removeItem(STORAGE_KEY_WISHLIST);
+      } catch (e) {
+        console.error(e);
+      }
     }
-  }, [currentUser?.id, products.length]);
+  }, [currentUser?.id, products]);
 
   // Save Cart
   useEffect(() => {
@@ -402,19 +405,91 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
   const cartTotal = cart.reduce((total, item) => total + (item.product.price * item.quantity), 0);
 
+  // Reorder previous order items with fresh Firestore product data
+  const reorderOrder = (order: Order) => {
+    if (!order || !order.items || order.items.length === 0) {
+      showToast('لا توجد منتجات في هذا الطلب لإعادة طلبها');
+      return;
+    }
+
+    let addedCount = 0;
+    const skippedNames: string[] = [];
+
+    setCart(prevCart => {
+      let updatedCart = [...prevCart];
+
+      for (const item of order.items) {
+        const pId = item.product?.id || item.product?.productId || (item as any).productId;
+        // Fetch current live product data from Firestore
+        const freshProduct = products.find(p => p.id === pId || p.productId === pId);
+
+        const rawStock = freshProduct
+          ? (freshProduct.stock !== undefined && freshProduct.stock !== null
+              ? freshProduct.stock
+              : (freshProduct.stockCount !== undefined && freshProduct.stockCount !== null ? freshProduct.stockCount : 100))
+          : 0;
+
+        const isAvailable = freshProduct && freshProduct.isAvailable !== false && freshProduct.inStock !== false && rawStock > 0;
+
+        if (!freshProduct || !isAvailable) {
+          const name = item.product?.nameAr || item.product?.name || (item as any).productNameAr || 'منتج غير متاح';
+          if (!skippedNames.includes(name)) {
+            skippedNames.push(name);
+          }
+          continue;
+        }
+
+        const qtyToAdd = Math.min(rawStock, Math.max(1, item.quantity));
+        const existingIdx = updatedCart.findIndex(ci => ci.product.id === freshProduct.id);
+
+        if (existingIdx > -1) {
+          const currentQty = updatedCart[existingIdx].quantity;
+          const newQty = Math.min(rawStock, currentQty + qtyToAdd);
+          updatedCart[existingIdx] = {
+            ...updatedCart[existingIdx],
+            product: freshProduct, // Current price and stock from Firestore
+            quantity: newQty
+          };
+        } else {
+          updatedCart.push({
+            product: freshProduct, // Current price and stock from Firestore
+            quantity: qtyToAdd
+          });
+        }
+        addedCount++;
+      }
+
+      return updatedCart;
+    });
+
+    if (addedCount > 0 && skippedNames.length === 0) {
+      showToast(`تمت إضافة جميع منتجات الطلب (${addedCount}) إلى السلة بالأسعار الحالية`);
+      navigateTo('cart');
+    } else if (addedCount > 0 && skippedNames.length > 0) {
+      showToast(`تمت إضافة ${addedCount} منتجات للسلة، وتم تخطي (${skippedNames.slice(0, 2).join('، ')}) لعدم توفرها`);
+      navigateTo('cart');
+    } else {
+      showToast(`تعذر إعادة الطلب: الأصناف المطلوبة (${skippedNames.slice(0, 2).join('، ')}) غير متوفرة حالياً`);
+    }
+  };
+
   // Wishlist & Favorites Firebase Operations
   const addToFavorites = async (product: Product) => {
+    if (!currentUser?.id) {
+      showToast('يرجى تسجيل الدخول لحفظ المنتجات في المفضلة');
+      navigateTo('auth');
+      return;
+    }
+
     setWishlist(prev => {
       if (prev.some(p => p.id === product.id)) return prev;
       return [...prev, product];
     });
 
-    if (currentUser?.id) {
-      try {
-        await favoriteService.addFavorite(currentUser.id, product.id);
-      } catch (err) {
-        console.warn('Failed to save favorite in Firebase:', err);
-      }
+    try {
+      await favoriteService.addFavorite(currentUser.id, product.id);
+    } catch (err) {
+      console.warn('Failed to save favorite in Firebase:', err);
     }
     showToast('تمت الإضافة إلى المفضلة');
   };
@@ -433,6 +508,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleWishlist = async (product: Product) => {
+    if (!currentUser?.id) {
+      showToast('يرجى تسجيل الدخول لحفظ المنتجات في المفضلة');
+      navigateTo('auth');
+      return;
+    }
+
     const exists = wishlist.some(p => p.id === product.id);
     if (exists) {
       await removeFromFavorites(product.id);
@@ -525,6 +606,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeFromCart,
         updateQuantity,
         clearCart,
+        reorderOrder,
         cartCount,
         cartTotal,
         wishlist,

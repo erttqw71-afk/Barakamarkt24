@@ -27,7 +27,6 @@ import {
 import { Category, Product, Subcategory } from '../types';
 import { CATEGORIES } from '../data/categories';
 import { INITIAL_SUBCATEGORIES } from '../data/subcategories';
-import { PRODUCTS } from '../data/products';
 
 // Helper to prevent Firestore calls from hanging indefinitely
 const fetchWithTimeout = async <T>(promise: Promise<T>, timeoutMs = 3500): Promise<T> => {
@@ -64,13 +63,10 @@ class ProductService {
   private lastSyncTime: number = 0;
 
   constructor() {
-    // 1. Try loading cached data from localStorage for 0ms instant startup
+    // 1. Try loading cached real data from localStorage for instant startup
     this.loadFromLocalStorage();
 
-    // 2. If localStorage was empty, fallback to static defaults
-    if (this.productsCache.length === 0) {
-      this.productsCache = PRODUCTS.map(p => this.normalizeProduct(p));
-    }
+    // 2. Fallback only for initial category structure if empty
     if (this.categoriesCache.length === 0) {
       this.categoriesCache = CATEGORIES.map(c => this.normalizeCategory(c));
     }
@@ -283,14 +279,12 @@ class ProductService {
   // Setup Real-time Firestore Listeners for Instant Live Updates
   private setupRealtimeListeners(): void {
     try {
-      // 1. Products live listener
+      // 1. Products live listener (syncs creations, updates, and deletions immediately)
       const unsubProducts = onSnapshot(collections.products, (snapshot) => {
-        if (!snapshot.empty) {
-          this.productsCache = snapshot.docs.map(d => this.normalizeProduct({ ...d.data(), id: d.id }));
-          this.notifyListeners();
-        }
+        this.productsCache = snapshot.docs.map(d => this.normalizeProduct({ ...d.data(), id: d.id }));
+        this.notifyListeners();
       }, (err) => {
-        console.warn('Live products listener fallback to cache:', err.message);
+        console.warn('Live products listener error:', err.message);
       });
       this.unsubscribers.push(unsubProducts);
 
@@ -301,7 +295,7 @@ class ProductService {
           this.notifyListeners();
         }
       }, (err) => {
-        console.warn('Live categories listener fallback to cache:', err.message);
+        console.warn('Live categories listener notice:', err.message);
       });
       this.unsubscribers.push(unsubCategories);
 
@@ -312,7 +306,7 @@ class ProductService {
           this.notifyListeners();
         }
       }, (err) => {
-        console.warn('Live subcategories listener fallback to cache:', err.message);
+        console.warn('Live subcategories listener notice:', err.message);
       });
       this.unsubscribers.push(unsubSubcategories);
 
@@ -330,15 +324,14 @@ class ProductService {
 
     const now = Date.now();
     if (!force && this.lastSyncTime > 0 && (now - this.lastSyncTime) < CACHE_TTL_MS && this.productsCache.length > 0) {
-      // Cache is fresh, no need to issue redundant Firestore reads
+      // Cache is fresh
       return;
     }
 
     try {
       // 1. Fetch categories
-      let catSnapshot;
       try {
-        catSnapshot = await fetchWithTimeout(getDocs(collections.categories), 3000);
+        const catSnapshot = await fetchWithTimeout(getDocs(collections.categories), 3000);
         if (catSnapshot && !catSnapshot.empty) {
           this.categoriesCache = catSnapshot.docs.map(d => this.normalizeCategory({ ...d.data(), id: d.id }));
         }
@@ -356,11 +349,10 @@ class ProductService {
         // keep cache
       }
 
-      // 3. Fetch products
-      let prodSnapshot;
+      // 3. Fetch products from Firestore
       try {
-        prodSnapshot = await fetchWithTimeout(getDocs(collections.products), 3000);
-        if (prodSnapshot && !prodSnapshot.empty) {
+        const prodSnapshot = await fetchWithTimeout(getDocs(collections.products), 3000);
+        if (prodSnapshot) {
           this.productsCache = prodSnapshot.docs.map(d => this.normalizeProduct({ ...d.data(), id: d.id }));
         }
       } catch (err) {
@@ -402,20 +394,9 @@ class ProductService {
     this.notifyListeners();
   }
 
-  // Seed default products into Firestore
+  // Sync or reload products strictly from Firestore
   public async seedProductsToFirestore(): Promise<void> {
-    const chunkSize = 100;
-    for (let i = 0; i < PRODUCTS.length; i += chunkSize) {
-      const chunk = PRODUCTS.slice(i, i + chunkSize);
-      const batch = writeBatch(db);
-      for (const prod of chunk) {
-        const docRef = doc(collections.products, prod.id);
-        batch.set(docRef, this.normalizeProduct(prod));
-      }
-      await batch.commit();
-    }
-    this.productsCache = PRODUCTS.map(p => this.normalizeProduct(p));
-    this.notifyListeners();
+    await this.syncFromFirestore(true);
   }
 
   // ==========================================

@@ -17,6 +17,7 @@ service cloud.firestore {
         request.auth.token.email == 'admin@barakamarkt24.com' ||
         request.auth.token.email == 'admin@barakamarkt24.de' ||
         request.auth.token.email == 'erttqw71@gmail.com' ||
+        request.auth.token.email == 'barakamarkt24@gmail.com' ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );

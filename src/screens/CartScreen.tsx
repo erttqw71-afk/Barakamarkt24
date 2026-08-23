@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ShoppingBag, 
   Trash2, 
@@ -528,7 +528,13 @@ export const CartScreen: React.FC = () => {
             {enabledPaymentMethods.length === 0 ? (
               <p className="text-rose-600 text-xs font-bold">لا توجد طرق دفع مفعلة حالياً</p>
             ) : (
-              <div className={`grid grid-cols-${Math.min(enabledPaymentMethods.length, 3)} gap-2`}>
+              <div className={`grid gap-2 ${
+                enabledPaymentMethods.length === 1 
+                  ? 'grid-cols-1' 
+                  : enabledPaymentMethods.length === 2 
+                  ? 'grid-cols-2' 
+                  : 'grid-cols-3'
+              }`}>
                 {enabledPaymentMethods.map((method) => {
                   const Icon = method.icon;
                   const isSelected = paymentMethod === method.id;
