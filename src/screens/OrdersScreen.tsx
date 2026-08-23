@@ -375,27 +375,13 @@ export const OrdersScreen: React.FC = () => {
                         <span className="font-sans font-bold text-stone-800 text-right">{order.phone}</span>
                       </div>
 
-                      <div className="flex items-start justify-between border-b border-stone-100 pb-1.5">
+                      <div className="flex items-start justify-between">
                         <span className="font-bold text-stone-900 flex items-center gap-1 shrink-0">
                           <MapPin className="w-3.5 h-3.5 text-emerald-700 mt-0.5" />
                           <span>عنوان التوصيل:</span>
                         </span>
                         <span className="text-stone-800 text-left font-medium">
                           {order.address} {order.city ? `(${order.city})` : ''}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-stone-900 flex items-center gap-1">
-                          <Receipt className="w-3.5 h-3.5 text-stone-400" />
-                          <span>طريقة الدفع:</span>
-                        </span>
-                        <span className="font-bold text-stone-800 bg-stone-100 px-2 py-0.5 rounded-md border border-stone-200 text-[10px]">
-                          {order.paymentMethod === 'bank_transfer'
-                            ? 'تحويل بنكي (Bank Transfer)'
-                            : order.paymentMethod === 'card'
-                            ? 'بطاقة بنكية (Card)'
-                            : 'الدفع نقداً عند الاستلام (COD)'}
                         </span>
                       </div>
 

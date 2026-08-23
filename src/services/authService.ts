@@ -5,8 +5,6 @@ import {
   onAuthStateChanged,
   sendPasswordResetEmail,
   updateProfile as updateFirebaseProfile,
-  setPersistence,
-  browserLocalPersistence,
   User as FirebaseUser
 } from 'firebase/auth';
 import { 
@@ -61,24 +59,12 @@ class AuthService {
   private currentUser: User | null = null;
   private listeners: ((user: User | null) => void)[] = [];
   private isInitialized = false;
-  private authReadyPromise: Promise<User | null>;
-  private resolveAuthReady!: (user: User | null) => void;
 
   constructor() {
-    this.authReadyPromise = new Promise((resolve) => {
-      this.resolveAuthReady = resolve;
-    });
     this.initAuth();
   }
 
-  private async initAuth() {
-    // Explicitly enforce browser local persistence (persists across browser tabs and app restarts)
-    try {
-      await setPersistence(auth, browserLocalPersistence);
-    } catch (e) {
-      console.warn('Firebase setPersistence warning:', e);
-    }
-
+  private initAuth() {
     // Listen for real Firebase Auth state changes
     onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
       if (fbUser) {
@@ -105,7 +91,7 @@ class AuthService {
               role: (data.role === 'admin' || isSuperAdminEmail(fbUser.email)) ? 'admin' : 'customer'
             };
           } else {
-            // Create user document if not exists
+            // Create user document
             const isAdmin = isSuperAdminEmail(fbUser.email);
             const generatedCode = referralService.generateReferralCode();
             const newUserProfile: User = {
@@ -140,11 +126,7 @@ class AuthService {
       } else {
         this.currentUser = null;
       }
-
-      if (!this.isInitialized) {
-        this.isInitialized = true;
-        this.resolveAuthReady(this.currentUser ? { ...this.currentUser } : null);
-      }
+      this.isInitialized = true;
       this.notifyListeners();
     });
   }
@@ -163,19 +145,8 @@ class AuthService {
     };
   }
 
-  public async waitForAuthReady(): Promise<User | null> {
-    if (this.isInitialized) {
-      return this.currentUser ? { ...this.currentUser } : null;
-    }
-    return this.authReadyPromise;
-  }
-
   public getCurrentUser(): User | null {
     return this.currentUser ? { ...this.currentUser } : null;
-  }
-
-  public isAuthReady(): boolean {
-    return this.isInitialized;
   }
 
   // 1. Firebase Email & Password Registration (Role is strictly customer)

@@ -501,11 +501,10 @@ class ProductService {
     if (cleanUpdates.nameAr && !cleanUpdates.name) cleanUpdates.name = cleanUpdates.nameAr;
     if (cleanUpdates.description && !cleanUpdates.descriptionAr) cleanUpdates.descriptionAr = cleanUpdates.description;
     if (cleanUpdates.descriptionAr && !cleanUpdates.description) cleanUpdates.description = cleanUpdates.descriptionAr;
-    if (cleanUpdates.sortOrder !== undefined) cleanUpdates.sortOrder = Number(cleanUpdates.sortOrder);
 
     try {
       const docRef = doc(collections.categories, id);
-      await setDoc(docRef, cleanUpdates, { merge: true });
+      await updateDoc(docRef, cleanUpdates);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `categories/${id}`);
     }
@@ -815,22 +814,15 @@ class ProductService {
     if (cleanUpdates.nameAr && !cleanUpdates.name) cleanUpdates.name = cleanUpdates.nameAr;
     if (cleanUpdates.description && !cleanUpdates.descriptionAr) cleanUpdates.descriptionAr = cleanUpdates.description;
     if (cleanUpdates.descriptionAr && !cleanUpdates.description) cleanUpdates.description = cleanUpdates.descriptionAr;
-    if (cleanUpdates.price !== undefined) cleanUpdates.price = Number(cleanUpdates.price);
-    if (cleanUpdates.oldPrice !== undefined) {
-      cleanUpdates.oldPrice = cleanUpdates.oldPrice ? Number(cleanUpdates.oldPrice) : undefined;
-      cleanUpdates.originalPrice = cleanUpdates.oldPrice;
-    }
-    if (cleanUpdates.stock !== undefined) {
-      cleanUpdates.stock = Number(cleanUpdates.stock);
-      cleanUpdates.stockCount = Number(cleanUpdates.stock);
-    }
+    if (cleanUpdates.oldPrice !== undefined) cleanUpdates.originalPrice = cleanUpdates.oldPrice;
+    if (cleanUpdates.stock !== undefined) cleanUpdates.stockCount = cleanUpdates.stock;
     if (cleanUpdates.images && cleanUpdates.images.length > 0 && !cleanUpdates.image) {
       cleanUpdates.image = cleanUpdates.images[0];
     }
 
     try {
       const docRef = doc(collections.products, id);
-      await setDoc(docRef, cleanUpdates, { merge: true });
+      await updateDoc(docRef, cleanUpdates);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `products/${id}`);
     }

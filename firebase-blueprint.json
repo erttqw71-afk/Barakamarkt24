@@ -111,7 +111,6 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "orderId": { "type": "string" },
         "userId": { "type": "string" },
         "customerName": { "type": "string" },
         "phone": { "type": "string" },
@@ -122,11 +121,7 @@
         "discount": { "type": "number" },
         "total": { "type": "number" },
         "status": { "type": "string" },
-        "paymentMethod": { "type": "string" },
-        "paymentStatus": { "type": "string" },
         "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" },
-        "timestamp": { "type": "string" },
         "notes": { "type": "string" }
       },
       "required": ["id", "total", "status"]

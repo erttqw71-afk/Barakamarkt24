@@ -38,34 +38,12 @@ export const CartScreen: React.FC = () => {
     navigateTo, 
     currentUser,
     showToast,
-    storeSettings,
     currencySymbol
   } = useApp();
 
   const [isCheckingOut, setIsCheckingOut] = useState<boolean>(false);
   const [showCheckoutForm, setShowCheckoutForm] = useState<boolean>(false);
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
-
-  // Dynamic store settings from Firestore
-  const isStoreOpen = storeSettings.isOpen !== false;
-  const deliveryFeeRate = storeSettings.deliveryFee !== undefined ? storeSettings.deliveryFee : 2.50;
-  const freeThreshold = storeSettings.freeDeliveryThreshold !== undefined ? storeSettings.freeDeliveryThreshold : 50.00;
-  const minOrderAmount = storeSettings.minOrderAmount !== undefined ? storeSettings.minOrderAmount : 15.00;
-
-  // Active Payment Methods from Firestore
-  const enabledPaymentMethods = useMemo(() => {
-    const methods: { id: 'cash_on_delivery' | 'card' | 'bank_transfer'; label: string; icon: any }[] = [];
-    if (storeSettings.paymentMethods?.cash_on_delivery !== false) {
-      methods.push({ id: 'cash_on_delivery', label: 'عند الاستلام', icon: Banknote });
-    }
-    if (storeSettings.paymentMethods?.card !== false) {
-      methods.push({ id: 'card', label: 'بطاقة بنكية', icon: CreditCard });
-    }
-    if (storeSettings.paymentMethods?.bank_transfer !== false) {
-      methods.push({ id: 'bank_transfer', label: 'تحويل بنكي', icon: FileText });
-    }
-    return methods;
-  }, [storeSettings.paymentMethods]);
 
   // Customer order checkout fields
   const [customerName, setCustomerName] = useState<string>(currentUser?.name || '');
@@ -75,20 +53,10 @@ export const CartScreen: React.FC = () => {
   const [customerNotes, setCustomerNotes] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'cash_on_delivery' | 'card' | 'bank_transfer'>('cash_on_delivery');
 
-  // Ensure selected payment method is active
-  useEffect(() => {
-    if (enabledPaymentMethods.length > 0) {
-      const isCurrentActive = enabledPaymentMethods.some(m => m.id === paymentMethod);
-      if (!isCurrentActive) {
-        setPaymentMethod(enabledPaymentMethods[0].id);
-      }
-    }
-  }, [enabledPaymentMethods, paymentMethod]);
-
   // Delivery calculations
-  const deliveryFee = cartTotal >= freeThreshold || cartTotal === 0 ? 0 : deliveryFeeRate;
+  const FREE_SHIPPING_THRESHOLD = 50;
+  const deliveryFee = cartTotal >= FREE_SHIPPING_THRESHOLD || cartTotal === 0 ? 0 : 2.50;
   const finalTotal = cartTotal + deliveryFee;
-  const isBelowMinOrder = cartTotal < minOrderAmount;
 
   // Helper to determine max available stock per item
   const getItemStock = (item: CartItem): number => {
@@ -101,35 +69,13 @@ export const CartScreen: React.FC = () => {
     e.preventDefault();
     if (cart.length === 0) return;
 
-    if (!isStoreOpen) {
-      showToast('المتجر مغلق حاليًا لاستقبال الطلبات الجديدة / Derzeit geschlossen');
-      return;
-    }
-
-    if (isBelowMinOrder) {
-      showToast(`الحد الأدنى للطلب هو ${currencySymbol || '€'}${minOrderAmount.toFixed(2)}`);
-      return;
-    }
-
     if (!customerName.trim() || !customerPhone.trim() || !customerAddress.trim()) {
       showToast('يرجى استكمال الاسم ورقم الهاتف والعنوان لتأكيد الطلب');
       return;
     }
 
-    if (enabledPaymentMethods.length === 0) {
-      showToast('لا توجد طرق دفع متاحة حالياً، يرجى التواصل مع الإدارة');
-      return;
-    }
-
     setIsCheckingOut(true);
     try {
-      let initialPaymentStatus: 'pending' | 'paid' | 'awaiting_transfer' = 'pending';
-      if (paymentMethod === 'bank_transfer') {
-        initialPaymentStatus = 'awaiting_transfer';
-      } else if (paymentMethod === 'card') {
-        initialPaymentStatus = 'paid';
-      }
-
       const order = await orderService.createOrder({
         userId: currentUser?.id || 'guest',
         customerName: customerName.trim(),
@@ -141,9 +87,7 @@ export const CartScreen: React.FC = () => {
         deliveryFee,
         discount: 0,
         total: finalTotal,
-        paymentMethod: paymentMethod,
-        paymentStatus: initialPaymentStatus,
-        notes: customerNotes.trim()
+        notes: customerNotes.trim() ? `${customerNotes.trim()} [طريقة الدفع: ${paymentMethod === 'cash_on_delivery' ? 'الدفع عند الاستلام' : paymentMethod === 'card' ? 'بطاقة بنكية' : 'تحويل بنكي'}]` : `[طريقة الدفع: ${paymentMethod === 'cash_on_delivery' ? 'الدفع عند الاستلام' : paymentMethod === 'card' ? 'بطاقة بنكية' : 'تحويل بنكي'}]`
       });
 
       setOrderSuccess(order.id);
@@ -186,11 +130,7 @@ export const CartScreen: React.FC = () => {
           <div className="flex justify-between text-stone-600">
             <span>طريقة الدفع:</span>
             <span className="font-bold text-stone-800">
-              {paymentMethod === 'cash_on_delivery' 
-                ? 'الدفع نقداً عند الاستلام' 
-                : paymentMethod === 'card' 
-                ? 'بطاقة بنكية' 
-                : 'تحويل بنكي'}
+              {paymentMethod === 'cash_on_delivery' ? 'الدفع نقداً عند الاستلام' : 'بطاقة / تحويل'}
             </span>
           </div>
           <div className="flex justify-between text-stone-600 pt-2 border-t border-stone-100">
@@ -364,59 +304,31 @@ export const CartScreen: React.FC = () => {
         })}
       </div>
 
-      {/* Store Closed Alert if isOpen is false */}
-      {!isStoreOpen && (
-        <div className="bg-rose-50 border border-rose-200 p-4 rounded-3xl text-rose-900 shadow-2xs space-y-1">
-          <div className="flex items-center gap-2 font-bold text-xs">
-            <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping" />
-            <span>المتجر مغلق حاليًا لاستقبال الطلبات الجديدة</span>
-          </div>
-          <p className="text-[11px] text-rose-700">
-            {storeSettings.closedMessageAr || 'المتجر مغلق حاليًا لاستقبال الطلبات الجديدة. يمكنك تصفح المنتجات وسنعاود الفتح قريبًا!'}
-          </p>
-          {storeSettings.closedMessageDe && (
-            <p className="text-[10px] text-rose-600 font-sans italic border-t border-rose-100 pt-1 mt-1">
-              {storeSettings.closedMessageDe}
-            </p>
-          )}
-        </div>
-      )}
-
       {/* Free Delivery Banner Progress */}
       <div className="bg-emerald-50 border border-emerald-200/80 p-3.5 rounded-3xl flex items-center gap-3 text-xs text-emerald-900 shadow-2xs">
         <div className="w-8 h-8 rounded-xl bg-emerald-800 text-amber-300 flex items-center justify-center shrink-0 shadow-2xs">
           <Truck className="w-4 h-4" />
         </div>
         <div className="flex-1">
-          {cartTotal >= freeThreshold ? (
+          {cartTotal >= FREE_SHIPPING_THRESHOLD ? (
             <span className="font-bold block text-emerald-900">
               🎉 تهانينا! لقد حصلت على توصيل مجاني لطلبك.
             </span>
           ) : (
             <div className="space-y-1">
               <span>
-                أضف منتجات بقيمة <strong className="font-sans font-bold text-emerald-800">{currencySymbol || '€'}{(freeThreshold - cartTotal).toFixed(2)}</strong> إضافية للحصول على توصيل مجاني!
+                أضف منتجات بقيمة <strong className="font-sans font-bold text-emerald-800">{currencySymbol || '€'}{(FREE_SHIPPING_THRESHOLD - cartTotal).toFixed(2)}</strong> إضافية للحصول على توصيل مجاني!
               </span>
               <div className="w-full bg-emerald-200/70 h-1.5 rounded-full overflow-hidden">
                 <div 
                   className="bg-emerald-700 h-full rounded-full transition-all duration-300"
-                  style={{ width: `${Math.min(100, (cartTotal / freeThreshold) * 100)}%` }}
+                  style={{ width: `${Math.min(100, (cartTotal / FREE_SHIPPING_THRESHOLD) * 100)}%` }}
                 />
               </div>
             </div>
           )}
         </div>
       </div>
-
-      {/* Minimum Order Amount Warning */}
-      {isBelowMinOrder && (
-        <div className="bg-amber-50 border border-amber-200/80 p-3 rounded-2xl flex items-center gap-2 text-xs text-amber-900">
-          <span className="font-bold">⚠️ الحد الأدنى للطلب:</span>
-          <span>
-            يجب أن يصل مجموع السلة إلى <strong className="font-sans font-bold text-amber-950">{currencySymbol || '€'}{minOrderAmount.toFixed(2)}</strong> لإتمام الطلب (متبقي {currencySymbol || '€'}{(minOrderAmount - cartTotal).toFixed(2)}).
-          </span>
-        </div>
-      )}
 
       {/* Order Calculations Summary */}
       <div className="bg-white p-4 rounded-3xl border border-stone-200/80 shadow-2xs space-y-2.5 text-xs">
@@ -522,52 +434,34 @@ export const CartScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* Payment Method Selector (Dynamic from Store Settings) */}
+          {/* Payment Method Selector */}
           <div className="space-y-1.5 pt-1">
             <label className="text-[11px] font-bold text-stone-700 block">طريقة الدفع المفضلة:</label>
-            {enabledPaymentMethods.length === 0 ? (
-              <p className="text-rose-600 text-xs font-bold">لا توجد طرق دفع مفعلة حالياً</p>
-            ) : (
-              <div className={`grid grid-cols-${Math.min(enabledPaymentMethods.length, 3)} gap-2`}>
-                {enabledPaymentMethods.map((method) => {
-                  const Icon = method.icon;
-                  const isSelected = paymentMethod === method.id;
-                  return (
-                    <button
-                      key={method.id}
-                      type="button"
-                      onClick={() => setPaymentMethod(method.id)}
-                      className={`p-2.5 rounded-2xl border text-center flex flex-col items-center gap-1 transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-emerald-800 text-white border-emerald-800 shadow-xs'
-                          : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
-                      }`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      <span className="text-[10px] font-bold">{method.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Bank Transfer Notes if selected */}
-            {paymentMethod === 'bank_transfer' && storeSettings.bankDetails?.iban && (
-              <div className="bg-stone-50 border border-stone-200 p-2.5 rounded-xl text-[11px] text-stone-700 space-y-1 font-sans mt-2">
-                <div className="font-bold text-stone-900 flex items-center justify-between">
-                  <span>{storeSettings.bankDetails.bankName || 'Sparkasse'}</span>
-                  <span>{storeSettings.bankDetails.accountHolder}</span>
-                </div>
-                <div className="font-mono text-emerald-800 font-bold">
-                  IBAN: {storeSettings.bankDetails.iban}
-                </div>
-                {storeSettings.bankDetails.noteAr && (
-                  <div className="text-[10px] text-stone-500 font-sans">
-                    {storeSettings.bankDetails.noteAr}
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'cash_on_delivery', label: 'عند الاستلام', icon: Banknote },
+                { id: 'card', label: 'بطاقة بنكية', icon: CreditCard },
+                { id: 'bank_transfer', label: 'تحويل بنكي', icon: FileText },
+              ].map((method) => {
+                const Icon = method.icon;
+                const isSelected = paymentMethod === method.id;
+                return (
+                  <button
+                    key={method.id}
+                    type="button"
+                    onClick={() => setPaymentMethod(method.id as any)}
+                    className={`p-2.5 rounded-2xl border text-center flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-emerald-800 text-white border-emerald-800 shadow-xs'
+                        : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span className="text-[10px] font-bold">{method.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Special Notes */}
@@ -585,47 +479,22 @@ export const CartScreen: React.FC = () => {
           {/* Submit Order Button */}
           <button
             type="submit"
-            disabled={isCheckingOut || !isStoreOpen || isBelowMinOrder}
-            className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-black py-3.5 px-4 rounded-2xl shadow-lg flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer active:scale-98 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isCheckingOut}
+            className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-black py-3.5 px-4 rounded-2xl shadow-lg flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer active:scale-98 transition-all disabled:opacity-50"
           >
             <ShoppingBag className="w-4 h-4 text-amber-300" />
-            <span>
-              {!isStoreOpen 
-                ? 'المتجر مغلق حاليًا' 
-                : isBelowMinOrder 
-                ? `الحد الأدنى للطلب ${currencySymbol || '€'}${minOrderAmount.toFixed(2)}` 
-                : isCheckingOut 
-                ? 'جاري إرسال الطلب وحفظه...' 
-                : `تأكيد وإتمام الطلب الآن • ${currencySymbol || '€'}${finalTotal.toFixed(2)}`}
-            </span>
+            <span>{isCheckingOut ? 'جاري إرسال الطلب وحفظه...' : `تأكيد وإتمام الطلب الآن • ${currencySymbol || '€'}${finalTotal.toFixed(2)}`}</span>
           </button>
         </form>
       ) : (
         /* Proceed to Checkout Trigger Button */
         <button
-          onClick={() => {
-            if (!isStoreOpen) {
-              showToast('المتجر مغلق حاليًا لاستقبال الطلبات الجديدة / Derzeit geschlossen');
-              return;
-            }
-            if (isBelowMinOrder) {
-              showToast(`الحد الأدنى للطلب هو ${currencySymbol || '€'}${minOrderAmount.toFixed(2)}`);
-              return;
-            }
-            setShowCheckoutForm(true);
-          }}
-          disabled={!isStoreOpen || isBelowMinOrder}
-          className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-black py-4 px-4 rounded-2xl shadow-lg flex items-center justify-between text-xs sm:text-sm cursor-pointer active:scale-98 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => setShowCheckoutForm(true)}
+          className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-black py-4 px-4 rounded-2xl shadow-lg flex items-center justify-between text-xs sm:text-sm cursor-pointer active:scale-98 transition-all"
         >
           <div className="flex items-center gap-2">
             <ShoppingBag className="w-4 h-4 text-amber-300" />
-            <span>
-              {!isStoreOpen 
-                ? 'المتجر مغلق حاليًا' 
-                : isBelowMinOrder 
-                ? `الحد الأدنى للطلب ${currencySymbol || '€'}${minOrderAmount.toFixed(2)}` 
-                : 'متابعة الطلب والدفع'}
-            </span>
+            <span>متابعة الطلب والدفع</span>
           </div>
           <div className="flex items-center gap-1 font-sans">
             <span>{currencySymbol || '€'}{finalTotal.toFixed(2)}</span>

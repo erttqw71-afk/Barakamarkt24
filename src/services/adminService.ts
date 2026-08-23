@@ -13,76 +13,37 @@ import {
 import { db, collections } from './firebaseConfig';
 import { User, Coupon, Offer, AppNotification, Referral } from '../types';
 
-export interface StorePaymentMethods {
-  cash_on_delivery: boolean;
-  bank_transfer: boolean;
-  card: boolean;
-}
-
-export interface BankAccountDetails {
-  bankName: string;
-  accountHolder: string;
-  iban: string;
-  bic?: string;
-  noteAr?: string;
-  noteDe?: string;
-}
-
 export interface AppSettings {
   id?: string;
-  isOpen: boolean; // Main store status
-  closedMessageAr?: string;
-  closedMessageDe?: string;
   storeNameAr: string;
   storeNameEn: string;
-  storeNameDe?: string;
   contactEmail: string;
   contactPhone: string;
   deliveryFee: number;
-  freeDeliveryThreshold: number; // freeDeliveryFrom
-  minOrderAmount: number;
-  paymentMethods: StorePaymentMethods;
-  bankDetails?: BankAccountDetails;
+  freeDeliveryThreshold: number;
   currency: string;
+  minOrderAmount: number;
+  welcomeBonusPoints: number;
+  referralBonusAmount: number;
+  enableMaintenance: boolean;
   announcementText: string;
-  enableMaintenance?: boolean;
-  allowGuestCheckout?: boolean;
-  welcomeBonusPoints?: number;
-  referralBonusAmount?: number;
-  updatedAt?: string;
+  allowGuestCheckout: boolean;
 }
 
-export const DEFAULT_SETTINGS: AppSettings = {
-  isOpen: true,
-  closedMessageAr: 'المتجر مغلق حاليًا لاستقبال الطلبات الجديدة. يمكنك تصفح المنتجات وسنعاود الفتح قريبًا!',
-  closedMessageDe: 'Derzeit geschlossen. Sie können Produkte durchsuchen, neue Bestellungen werden bald wieder möglich sein!',
+const DEFAULT_SETTINGS: AppSettings = {
   storeNameAr: 'بركة ماركت 24',
   storeNameEn: 'Baraka Markt 24',
-  storeNameDe: 'Baraka Markt 24',
   contactEmail: 'support@barakamarkt24.de',
   contactPhone: '+49 176 12345678',
-  deliveryFee: 2.50,
-  freeDeliveryThreshold: 50.00,
-  minOrderAmount: 15.00,
-  paymentMethods: {
-    cash_on_delivery: true,
-    bank_transfer: true,
-    card: true,
-  },
-  bankDetails: {
-    bankName: 'Sparkasse Vorpommern',
-    accountHolder: 'Baraka Markt 24 GmbH',
-    iban: 'DE89 1505 0500 0123 4567 89',
-    bic: 'SPKVDEM1XXX',
-    noteAr: 'يرجى كتابة رقم الطلب في سبب التحويل (Verwendungszweck)',
-    noteDe: 'Bitte geben Sie Ihre Bestellnummer als Verwendungszweck an'
-  },
+  deliveryFee: 4.99,
+  freeDeliveryThreshold: 45.00,
   currency: '€',
-  announcementText: 'توصيل مجاني للطلبات فوق 50 يورو في غرايفسفالد وضواحيها!',
-  enableMaintenance: false,
-  allowGuestCheckout: true,
+  minOrderAmount: 15.00,
   welcomeBonusPoints: 100,
-  referralBonusAmount: 5.00
+  referralBonusAmount: 5.00,
+  enableMaintenance: false,
+  announcementText: 'توصيل مجاني لطلبات أكثر من 45 يورو في غرايفسفالد وضواحيها!',
+  allowGuestCheckout: true
 };
 
 class AdminService {
@@ -335,31 +296,6 @@ class AdminService {
     }
   }
 
-  async markNotificationAsRead(notifId: string): Promise<boolean> {
-    try {
-      const docRef = doc(collections.notifications, notifId);
-      await updateDoc(docRef, { read: true });
-      return true;
-    } catch (e) {
-      console.warn('Error marking notification read:', e);
-      return false;
-    }
-  }
-
-  async markAllNotificationsAsRead(): Promise<boolean> {
-    try {
-      const snap = await getDocs(collections.notifications);
-      const unreadDocs = snap.docs.filter(d => !d.data().read);
-      for (const d of unreadDocs) {
-        await updateDoc(d.ref, { read: true });
-      }
-      return true;
-    } catch (e) {
-      console.warn('Error marking all notifications read:', e);
-      return false;
-    }
-  }
-
   // ==========================================
   // 5. Referrals Management (Firestore 'referrals')
   // ==========================================
@@ -397,30 +333,14 @@ class AdminService {
   }
 
   // ==========================================
-  // 6. App Settings Management (Firestore doc 'settings/store')
+  // 6. App Settings Management (Firestore doc or local)
   // ==========================================
   async getSettings(): Promise<AppSettings> {
     try {
-      const settingsRef = doc(db, 'settings', 'store');
+      const settingsRef = doc(db, 'settings', 'general');
       const snap = await getDoc(settingsRef);
       if (snap.exists()) {
-        const data = snap.data();
-        return {
-          ...DEFAULT_SETTINGS,
-          ...data,
-          paymentMethods: {
-            ...DEFAULT_SETTINGS.paymentMethods,
-            ...(data.paymentMethods || {})
-          },
-          bankDetails: {
-            ...DEFAULT_SETTINGS.bankDetails,
-            ...(data.bankDetails || {})
-          }
-        } as AppSettings;
-      } else {
-        // Bootstrap initial settings to Firestore
-        await setDoc(settingsRef, DEFAULT_SETTINGS, { merge: true });
-        return { ...DEFAULT_SETTINGS };
+        return { ...DEFAULT_SETTINGS, ...snap.data() } as AppSettings;
       }
     } catch (e) {
       console.warn('Error getting settings from Firestore, returning defaults:', e);
@@ -428,52 +348,14 @@ class AdminService {
     return { ...DEFAULT_SETTINGS };
   }
 
-  async saveSettings(settings: Partial<AppSettings>): Promise<boolean> {
+  async saveSettings(settings: AppSettings): Promise<boolean> {
     try {
-      const settingsRef = doc(db, 'settings', 'store');
-      const payload = {
-        ...settings,
-        deliveryFee: settings.deliveryFee !== undefined ? Number(settings.deliveryFee) : DEFAULT_SETTINGS.deliveryFee,
-        freeDeliveryThreshold: settings.freeDeliveryThreshold !== undefined ? Number(settings.freeDeliveryThreshold) : DEFAULT_SETTINGS.freeDeliveryThreshold,
-        minOrderAmount: settings.minOrderAmount !== undefined ? Number(settings.minOrderAmount) : DEFAULT_SETTINGS.minOrderAmount,
-        updatedAt: new Date().toISOString()
-      };
-      await setDoc(settingsRef, payload, { merge: true });
+      const settingsRef = doc(db, 'settings', 'general');
+      await setDoc(settingsRef, settings, { merge: true });
       return true;
     } catch (e) {
       console.warn('Error saving settings to Firestore:', e);
       return false;
-    }
-  }
-
-  subscribeToSettings(callback: (settings: AppSettings) => void): () => void {
-    try {
-      const settingsRef = doc(db, 'settings', 'store');
-      return onSnapshot(settingsRef, (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          const normalized: AppSettings = {
-            ...DEFAULT_SETTINGS,
-            ...data,
-            paymentMethods: {
-              ...DEFAULT_SETTINGS.paymentMethods,
-              ...(data.paymentMethods || {})
-            },
-            bankDetails: {
-              ...DEFAULT_SETTINGS.bankDetails,
-              ...(data.bankDetails || {})
-            }
-          };
-          callback(normalized);
-        } else {
-          callback({ ...DEFAULT_SETTINGS });
-        }
-      }, (err) => {
-        console.warn('Error in settings listener:', err);
-      });
-    } catch (e) {
-      console.warn('Could not attach snapshot listener to settings/store:', e);
-      return () => {};
     }
   }
 }
