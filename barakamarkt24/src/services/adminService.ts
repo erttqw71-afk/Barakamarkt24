@@ -105,7 +105,83 @@ class AdminService {
     return [];
   }
 
-  async updateUserRole(userId: string, role: 'customer' | 'admin'): Promise<boolean> {
+  async getDrivers(): Promise<User[]> {
+    try {
+      const allUsers = await this.getAllUsers();
+      const drivers = allUsers.filter(u => u.role === 'driver');
+      if (drivers.length > 0) {
+        return drivers;
+      }
+      
+      // If no driver found, create a sample/default verified driver in Firestore for Greifswald
+      const defaultDriverId = 'driver_greifswald_01';
+      const defaultDriverDoc = doc(collections.users, defaultDriverId);
+      const defaultDriverSnap = await getDoc(defaultDriverDoc);
+      
+      if (!defaultDriverSnap.exists()) {
+        const defaultDriver: User = {
+          id: defaultDriverId,
+          name: 'سائق التوصيل المعتمد (أبو أحمد)',
+          email: 'driver@barakamarkt24.de',
+          phone: '+49 176 9988 7766',
+          role: 'driver',
+          city: 'Greifswald',
+          address: 'Marktplatz 1, Greifswald',
+          isActive: true,
+          vehicleInfo: 'سيارة نقل مبردة (Mercedes Sprinter)',
+          createdAt: new Date().toISOString()
+        };
+        await setDoc(defaultDriverDoc, defaultDriver);
+        return [defaultDriver];
+      } else {
+        return [{ ...defaultDriverSnap.data(), id: defaultDriverSnap.id } as User];
+      }
+    } catch (e) {
+      console.warn('Error getting drivers from Firestore:', e);
+      return [
+        {
+          id: 'driver_greifswald_01',
+          name: 'سائق التوصيل المعتمد (غرايفسفالد)',
+          email: 'driver@barakamarkt24.de',
+          phone: '+49 176 9988 7766',
+          role: 'driver',
+          city: 'Greifswald',
+          isActive: true
+        }
+      ];
+    }
+  }
+
+  async createDriverUser(driverData: { name: string; email: string; phone: string; vehicleInfo?: string }): Promise<User> {
+    const cleanEmail = driverData.email.trim().toLowerCase();
+    const cleanName = driverData.name.trim();
+    const cleanPhone = driverData.phone.trim();
+    const driverId = `driver_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    const newDriver: User = {
+      id: driverId,
+      name: cleanName,
+      email: cleanEmail,
+      phone: cleanPhone,
+      role: 'driver',
+      city: 'Greifswald',
+      address: 'Greifswald Delivery Center',
+      isActive: true,
+      vehicleInfo: driverData.vehicleInfo?.trim() || 'سيارة توصيل',
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      const userRef = doc(collections.users, driverId);
+      await setDoc(userRef, newDriver);
+    } catch (e) {
+      console.warn('Error creating driver in Firestore:', e);
+    }
+
+    return newDriver;
+  }
+
+  async updateUserRole(userId: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> {
     try {
       const userRef = doc(collections.users, userId);
       await updateDoc(userRef, { role });

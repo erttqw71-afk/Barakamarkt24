@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   ShoppingBag, 
   Trash2, 
@@ -20,11 +20,17 @@ import {
   ChevronRight,
   RotateCcw,
   ArrowRight,
-  Info
+  Info,
+  Check,
+  X,
+  Building2,
+  Navigation,
+  Globe
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { orderService } from '../services/orderService';
-import { CartItem } from '../types';
+import { deliveryService } from '../services/deliveryService';
+import { CartItem, DeliveryZone } from '../types';
 import { OptimizedImage } from '../components/common/OptimizedImage';
 
 export const CartScreen: React.FC = () => {
@@ -45,12 +51,13 @@ export const CartScreen: React.FC = () => {
   const [isCheckingOut, setIsCheckingOut] = useState<boolean>(false);
   const [showCheckoutForm, setShowCheckoutForm] = useState<boolean>(false);
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
+  const [orderSuccessData, setOrderSuccessData] = useState<{ plz: string; address: string; city: string } | null>(null);
 
   // Dynamic store settings from Firestore
   const isStoreOpen = storeSettings.isOpen !== false;
-  const deliveryFeeRate = storeSettings.deliveryFee !== undefined ? storeSettings.deliveryFee : 2.50;
+  const baseDeliveryFeeRate = storeSettings.deliveryFee !== undefined ? storeSettings.deliveryFee : 2.50;
   const freeThreshold = storeSettings.freeDeliveryThreshold !== undefined ? storeSettings.freeDeliveryThreshold : 50.00;
-  const minOrderAmount = storeSettings.minOrderAmount !== undefined ? storeSettings.minOrderAmount : 15.00;
+  const baseMinOrderAmount = storeSettings.minOrderAmount !== undefined ? storeSettings.minOrderAmount : 15.00;
 
   // Active Payment Methods from Firestore
   const enabledPaymentMethods = useMemo(() => {
@@ -71,9 +78,56 @@ export const CartScreen: React.FC = () => {
   const [customerName, setCustomerName] = useState<string>(currentUser?.name || '');
   const [customerPhone, setCustomerPhone] = useState<string>(currentUser?.phone || '');
   const [customerAddress, setCustomerAddress] = useState<string>(currentUser?.address || '');
-  const [customerCity, setCustomerCity] = useState<string>(currentUser?.city || 'غرايفسفالد');
+  const [customerCity, setCustomerCity] = useState<string>(currentUser?.city || 'غرايفسفالد (Greifswald)');
+  const [customerPlz, setCustomerPlz] = useState<string>(() => {
+    return (currentUser as any)?.plz || '17489';
+  });
   const [customerNotes, setCustomerNotes] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'cash_on_delivery' | 'card' | 'bank_transfer'>('cash_on_delivery');
+
+  // Delivery Validation State
+  const [plzValidation, setPlzValidation] = useState<{
+    isValid: boolean;
+    zone?: DeliveryZone;
+    reason?: string;
+    localizedMessage?: { ar: string; de: string };
+  } | null>(null);
+  const [isValidatingPlz, setIsValidatingPlz] = useState<boolean>(false);
+  const [showOutOfServiceModal, setShowOutOfServiceModal] = useState<boolean>(false);
+
+  const plzInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Validate PLZ with deliveryService whenever customerPlz changes
+  useEffect(() => {
+    let isMounted = true;
+    const validate = async () => {
+      const clean = customerPlz.trim();
+      if (!clean) {
+        setPlzValidation(null);
+        return;
+      }
+
+      setIsValidatingPlz(true);
+      try {
+        const result = await deliveryService.validatePlz(clean);
+        if (isMounted) {
+          setPlzValidation(result);
+        }
+      } catch (err) {
+        console.warn('PLZ validation error:', err);
+      } finally {
+        if (isMounted) {
+          setIsValidatingPlz(false);
+        }
+      }
+    };
+
+    const timer = setTimeout(validate, 200);
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [customerPlz]);
 
   // Ensure selected payment method is active
   useEffect(() => {
@@ -84,6 +138,15 @@ export const CartScreen: React.FC = () => {
       }
     }
   }, [enabledPaymentMethods, paymentMethod]);
+
+  // Dynamic overrides from validated zone
+  const deliveryFeeRate = (plzValidation?.isValid && plzValidation.zone?.deliveryFee !== undefined)
+    ? plzValidation.zone.deliveryFee
+    : baseDeliveryFeeRate;
+
+  const minOrderAmount = (plzValidation?.isValid && plzValidation.zone?.minOrderAmount !== undefined)
+    ? plzValidation.zone.minOrderAmount
+    : baseMinOrderAmount;
 
   // Delivery calculations
   const deliveryFee = cartTotal >= freeThreshold || cartTotal === 0 ? 0 : deliveryFeeRate;
@@ -103,6 +166,19 @@ export const CartScreen: React.FC = () => {
 
     if (!isStoreOpen) {
       showToast('المتجر مغلق حاليًا لاستقبال الطلبات الجديدة / Derzeit geschlossen');
+      return;
+    }
+
+    // 1. Mandatory Location & Service Area Validation
+    const cleanPlz = deliveryService.cleanPlz(customerPlz);
+    if (!cleanPlz || cleanPlz.length < 4) {
+      showToast('يرجى إدخال رمز بريدي (PLZ) صحيح في ألمانيا');
+      return;
+    }
+
+    const validation = await deliveryService.validatePlz(cleanPlz);
+    if (!validation.isValid) {
+      setShowOutOfServiceModal(true);
       return;
     }
 
@@ -135,7 +211,10 @@ export const CartScreen: React.FC = () => {
         customerName: customerName.trim(),
         phone: customerPhone.trim(),
         address: customerAddress.trim(),
-        city: customerCity.trim(),
+        city: customerCity.trim() || 'Greifswald',
+        cityId: validation.zone?.cityId || 'greifswald',
+        branchId: validation.zone?.branchId || 'branch-greifswald-main',
+        plz: cleanPlz,
         items: [...cart],
         subtotal: cartTotal,
         deliveryFee,
@@ -147,6 +226,11 @@ export const CartScreen: React.FC = () => {
       });
 
       setOrderSuccess(order.id);
+      setOrderSuccessData({
+        plz: cleanPlz,
+        address: customerAddress.trim(),
+        city: customerCity.trim() || 'Greifswald'
+      });
       clearCart();
       showToast(`تم إرسال طلبك بنجاح رقم #${order.id}`);
     } catch (e) {
@@ -172,17 +256,26 @@ export const CartScreen: React.FC = () => {
           </p>
         </div>
 
-        <div className="bg-white p-4 rounded-3xl border border-stone-200/80 text-right text-xs space-y-2.5 shadow-2xs">
+        <div className="bg-white p-4.5 rounded-3xl border border-stone-200/80 text-right text-xs space-y-2.5 shadow-2xs">
           <div className="flex justify-between text-stone-600">
             <span>حالة الطلب:</span>
             <span className="font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
               قيد المراجعة والتجهيز
             </span>
           </div>
+
+          <div className="flex justify-between text-stone-600">
+            <span>المدينة والفرع:</span>
+            <span className="font-bold text-stone-800">
+              غرايفسفالد ({orderSuccessData?.plz || customerPlz}) - فرع غرايفسفالد الرئيسي
+            </span>
+          </div>
+
           <div className="flex justify-between text-stone-600">
             <span>العنوان المستهدف:</span>
-            <span className="font-bold text-stone-800">{customerAddress} ({customerCity})</span>
+            <span className="font-bold text-stone-800">{orderSuccessData?.address || customerAddress}</span>
           </div>
+
           <div className="flex justify-between text-stone-600">
             <span>طريقة الدفع:</span>
             <span className="font-bold text-stone-800">
@@ -193,6 +286,7 @@ export const CartScreen: React.FC = () => {
                 : 'تحويل بنكي'}
             </span>
           </div>
+
           <div className="flex justify-between text-stone-600 pt-2 border-t border-stone-100">
             <span>المجموع النهائي:</span>
             <span className="font-black text-emerald-800 text-sm font-sans">{currencySymbol || '€'}{finalTotal.toFixed(2)}</span>
@@ -251,12 +345,19 @@ export const CartScreen: React.FC = () => {
   return (
     <div className="p-4 space-y-4 pb-32 max-w-3xl mx-auto" dir="rtl">
       
-      {/* Top Header */}
-      <div className="flex items-center justify-between">
+      {/* Top Header with City Badge */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="font-black text-lg text-stone-900">سلة المشتريات</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="font-black text-lg text-stone-900">سلة المشتريات</h1>
+            <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-2 py-0.5 rounded-lg flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-emerald-700" />
+              <span>خدمة توصيل غرايفسفالد</span>
+            </span>
+          </div>
           <p className="text-xs text-stone-500 font-medium">{cartCount} أصناف محددة في طلبك</p>
         </div>
+
         <button
           onClick={clearCart}
           className="text-xs text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1 cursor-pointer bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200/60 hover:bg-rose-100 transition-colors"
@@ -447,13 +548,13 @@ export const CartScreen: React.FC = () => {
         </div>
       </div>
 
-      {/* Checkout Form Modal / Collapsible Section (متابعة الطلب) */}
+      {/* Checkout Form Section (متابعة الطلب) */}
       {showCheckoutForm ? (
-        <form onSubmit={handleCreateOrder} className="bg-white p-4 rounded-3xl border border-emerald-300 shadow-sm space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <form onSubmit={handleCreateOrder} className="bg-white p-4.5 rounded-3xl border border-emerald-300 shadow-sm space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
           <div className="flex items-center justify-between border-b border-stone-100 pb-2.5">
             <h3 className="font-black text-sm text-stone-900 flex items-center gap-1.5">
               <MapPin className="w-4 h-4 text-emerald-800" />
-              <span>بيانات التوصيل ومتابعة الطلب</span>
+              <span>بيانات التوصيل ومتابعة الطلب (Greifswald)</span>
             </h3>
             <button
               type="button"
@@ -468,7 +569,7 @@ export const CartScreen: React.FC = () => {
           <div className="space-y-1">
             <label className="text-[11px] font-bold text-stone-700 flex items-center gap-1">
               <User className="w-3.5 h-3.5 text-stone-400" />
-              <span>اسم المستلم الكامل:</span>
+              <span>اسم المستلم الكامل: *</span>
             </label>
             <input
               type="text"
@@ -476,7 +577,7 @@ export const CartScreen: React.FC = () => {
               placeholder="مثال: أحمد الصالح"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
-              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs focus:bg-white focus:border-emerald-700 focus:outline-hidden"
+              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs focus:bg-white focus:border-emerald-700 focus:outline-hidden font-bold"
             />
           </div>
 
@@ -484,7 +585,7 @@ export const CartScreen: React.FC = () => {
           <div className="space-y-1">
             <label className="text-[11px] font-bold text-stone-700 flex items-center gap-1">
               <Phone className="w-3.5 h-3.5 text-stone-400" />
-              <span>رقم الهاتف / الواتساب:</span>
+              <span>رقم الهاتف / الواتساب للتوصيل: *</span>
             </label>
             <input
               type="tel"
@@ -492,39 +593,115 @@ export const CartScreen: React.FC = () => {
               placeholder="مثال: +49 157 12345678"
               value={customerPhone}
               onChange={(e) => setCustomerPhone(e.target.value)}
-              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs focus:bg-white focus:border-emerald-700 focus:outline-hidden"
+              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs focus:bg-white focus:border-emerald-700 focus:outline-hidden font-sans font-bold"
             />
           </div>
 
-          {/* City and Address */}
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <label className="text-[11px] font-bold text-stone-700">المدينة:</label>
-              <input
-                type="text"
-                required
-                placeholder="المدينة"
-                value={customerCity}
-                onChange={(e) => setCustomerCity(e.target.value)}
-                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs focus:bg-white focus:border-emerald-700 focus:outline-hidden"
-              />
+          {/* Location Details: PLZ (الرمز البريدي) + City + Street */}
+          <div className="bg-stone-50/70 p-3.5 rounded-2xl border border-stone-200/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-stone-900 flex items-center gap-1">
+                <Navigation className="w-3.5 h-3.5 text-emerald-800" />
+                <span>عنوان التوصيل والرمز البريدي (PLZ)</span>
+              </span>
+              <span className="text-[10px] text-stone-500">منطقة الخدمة: Greifswald</span>
             </div>
+
+            {/* Postal Code PLZ Input with Live Validation */}
             <div className="space-y-1">
-              <label className="text-[11px] font-bold text-stone-700">الشارع ورقم البناء:</label>
-              <input
-                type="text"
-                required
-                placeholder="الشارع، رقم المنزل"
-                value={customerAddress}
-                onChange={(e) => setCustomerAddress(e.target.value)}
-                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs focus:bg-white focus:border-emerald-700 focus:outline-hidden"
-              />
+              <label className="text-[11px] font-bold text-stone-700 flex items-center justify-between">
+                <span>الرمز البريدي (PLZ) في غرايفسفالد: *</span>
+                <span className="text-[10px] text-stone-400 font-mono">17489, 17491, 17493...</span>
+              </label>
+
+              <div className="relative">
+                <input
+                  ref={plzInputRef}
+                  type="text"
+                  required
+                  maxLength={5}
+                  placeholder="مثال: 17489"
+                  value={customerPlz}
+                  onChange={(e) => setCustomerPlz(e.target.value.replace(/\D/g, ''))}
+                  className={`w-full bg-white border rounded-xl px-3 py-2.5 text-xs font-mono font-black focus:outline-hidden transition-colors ${
+                    plzValidation?.isValid
+                      ? 'border-emerald-500 bg-emerald-50/30'
+                      : plzValidation && !plzValidation.isValid
+                      ? 'border-rose-400 bg-rose-50/30'
+                      : 'border-stone-200 focus:border-emerald-700'
+                  }`}
+                />
+
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
+                  {isValidatingPlz ? (
+                    <span className="text-[10px] text-stone-400">جاري التحقق...</span>
+                  ) : plzValidation?.isValid ? (
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+                      <Check className="w-3 h-3 stroke-[3]" />
+                    </span>
+                  ) : plzValidation && !plzValidation.isValid ? (
+                    <span className="w-5 h-5 rounded-full bg-rose-600 text-white flex items-center justify-center">
+                      <X className="w-3 h-3 stroke-[3]" />
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Validation Status Indicator */}
+              {plzValidation?.isValid ? (
+                <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 font-bold pt-0.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>
+                    ✓ {plzValidation.zone?.nameAr || `منطقة ${customerPlz}`} (مشمول في خدمة التوصيل)
+                  </span>
+                </div>
+              ) : plzValidation && !plzValidation.isValid ? (
+                <div className="flex items-center justify-between gap-1 text-[11px] text-rose-700 font-bold pt-0.5">
+                  <span className="flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    <span>خارج منطقة التوصيل المعتمدة (Greifswald فقط)</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowOutOfServiceModal(true)}
+                    className="text-[10px] text-rose-800 underline cursor-pointer hover:text-rose-950"
+                  >
+                    عرض التفاصيل
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            {/* City and Address Inputs */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-stone-700">المدينة:</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="غرايفسفالد (Greifswald)"
+                  value={customerCity}
+                  onChange={(e) => setCustomerCity(e.target.value)}
+                  className="w-full bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs focus:border-emerald-700 focus:outline-hidden font-bold"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-stone-700">الشارع ورقم البناء: *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="مثال: Lange Str. 12"
+                  value={customerAddress}
+                  onChange={(e) => setCustomerAddress(e.target.value)}
+                  className="w-full bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs focus:border-emerald-700 focus:outline-hidden font-medium"
+                />
+              </div>
             </div>
           </div>
 
           {/* Payment Method Selector (Dynamic from Store Settings) */}
           <div className="space-y-1.5 pt-1">
-            <label className="text-[11px] font-bold text-stone-700 block">طريقة الدفع المفضلة:</label>
+            <label className="text-[11px] font-bold text-stone-700 block">طريقة الدفع المفضلة: *</label>
             {enabledPaymentMethods.length === 0 ? (
               <p className="text-rose-600 text-xs font-bold">لا توجد طرق دفع مفعلة حالياً</p>
             ) : (
@@ -638,6 +815,88 @@ export const CartScreen: React.FC = () => {
             <ChevronLeft className="w-4 h-4" />
           </div>
         </button>
+      )}
+
+      {/* Out of Service Area Modal (Arabic & German) */}
+      {showOutOfServiceModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95 duration-200">
+            
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center border border-amber-200/70">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-stone-900">
+                    التوصيل متاح حاليًا في Greifswald
+                  </h3>
+                  <p className="text-[11px] text-stone-500 font-sans">
+                    Lieferung derzeit nur in Greifswald
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowOutOfServiceModal(false)}
+                className="text-stone-400 hover:text-stone-700 cursor-pointer p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Arabic Message */}
+            <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200/80 space-y-1.5 text-xs text-stone-800 leading-relaxed">
+              <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                <Info className="w-4 h-4 text-emerald-800" />
+                <span>رسالة التوصيل والمناطق المتاحة:</span>
+              </div>
+              <p>
+                شكرًا لاهتمامك بـ <strong>Barakamarkt24</strong>. نخدم الآن مدينة <strong>Greifswald</strong> فقط حتى نضمن سرعة التوصيل وجودة الطلب. إذا كنت خارج المدينة، يمكنك تصفح المنتجات، وسنعمل على التوسع لفروع ومناطق أقرب إليك في المستقبل.
+              </p>
+            </div>
+
+            {/* German Message */}
+            <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200/80 space-y-1.5 text-xs text-stone-700 leading-relaxed font-sans" dir="ltr">
+              <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                <Globe className="w-4 h-4 text-emerald-800" />
+                <span>Liefergebiet Information:</span>
+              </div>
+              <p>
+                Vielen Dank für Ihr Interesse an <strong>Barakamarkt24</strong>. Aktuell liefern wir nur in <strong>Greifswald</strong> – so können wir schnelle Lieferung und gute Qualität sicherstellen. Wenn Sie außerhalb wohnen, können Sie die Produkte trotzdem ansehen. Eine Erweiterung in weitere Gebiete ist für die Zukunft geplant.
+              </p>
+            </div>
+
+            {/* Modal Buttons */}
+            <div className="flex flex-col sm:flex-row gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOutOfServiceModal(false);
+                  setShowCheckoutForm(true);
+                  setTimeout(() => {
+                    plzInputRef.current?.focus();
+                    plzInputRef.current?.select();
+                  }, 100);
+                }}
+                className="flex-1 bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3 px-4 rounded-xl cursor-pointer text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
+              >
+                <span>تعديل الرمز البريدي / PLZ ändern</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOutOfServiceModal(false);
+                  navigateTo('products');
+                }}
+                className="px-4 py-3 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-xl cursor-pointer text-xs"
+              >
+                تصفح المنتجات
+              </button>
+            </div>
+
+          </div>
+        </div>
       )}
 
     </div>

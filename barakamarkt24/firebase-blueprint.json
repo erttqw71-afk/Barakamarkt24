@@ -238,12 +238,75 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "referrerUserId", "code"]
+    },
+    "City": {
+      "title": "City",
+      "description": "Service city details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nameAr": { "type": "string" },
+        "nameDe": { "type": "string" },
+        "nameEn": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "nameAr", "nameDe", "isActive"]
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Store branch fulfilling orders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "cityId": { "type": "string" },
+        "nameAr": { "type": "string" },
+        "nameDe": { "type": "string" },
+        "nameEn": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "isDefault": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "cityId", "nameAr", "nameDe", "isActive"]
+    },
+    "DeliveryZone": {
+      "title": "DeliveryZone",
+      "description": "Postal code delivery zone mapping to branch",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "cityId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "plz": { "type": "string" },
+        "nameAr": { "type": "string" },
+        "nameDe": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "deliveryFee": { "type": "number" },
+        "minOrderAmount": { "type": "number" },
+        "estimatedTime": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "cityId", "branchId", "plz", "isActive"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "Stores user profiles with role-based access"
+    },
+    "/cities/{cityId}": {
+      "schema": "City",
+      "description": "Operating cities"
+    },
+    "/branches/{branchId}": {
+      "schema": "Branch",
+      "description": "Fulfillment branches"
+    },
+    "/deliveryZones/{zoneId}": {
+      "schema": "DeliveryZone",
+      "description": "Postal code delivery zones"
     },
     "/categories/{categoryId}": {
       "schema": "Category",

@@ -19,9 +19,11 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   pending: 'قيد الانتظار',
   confirmed: 'تم تأكيد الطلب',
   preparing: 'قيد التجهيز والتغليف',
+  ready_for_pickup: 'جاهز لاستلام السائق',
   on_the_way: 'الطلب في الطريق مع المندوب',
   out_for_delivery: 'الطلب في الطريق مع المندوب',
   delivered: 'تم تسليم الطلب للعميل',
+  delivery_failed: 'تعذر تسليم الطلب',
   cancelled: 'تم إلغاء الطلب'
 };
 
@@ -44,6 +46,9 @@ class OrderService {
             id: d.id,
             orderId: data.orderId || d.id,
             status: data.status || 'received',
+            cityId: data.cityId || 'greifswald',
+            branchId: data.branchId || 'branch-greifswald-main',
+            plz: data.plz || '',
             paymentMethod: data.paymentMethod || 'cash_on_delivery',
             paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending'),
             timeline: Array.isArray(data.timeline) ? data.timeline : []
@@ -130,6 +135,9 @@ class OrderService {
         phone: newOrder.phone || '',
         address: newOrder.address || '',
         city: newOrder.city || '',
+        cityId: newOrder.cityId || 'greifswald',
+        branchId: newOrder.branchId || 'branch-greifswald-main',
+        plz: newOrder.plz || '',
         subtotal: newOrder.subtotal,
         deliveryFee: newOrder.deliveryFee || 0,
         discount: newOrder.discount || 0,
@@ -201,6 +209,9 @@ class OrderService {
             id: d.id,
             orderId: data.orderId || d.id,
             status: data.status || 'received',
+            cityId: data.cityId || 'greifswald',
+            branchId: data.branchId || 'branch-greifswald-main',
+            plz: data.plz || '',
             paymentMethod: data.paymentMethod || 'cash_on_delivery',
             paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending'),
             timeline: Array.isArray(data.timeline) ? data.timeline : []
@@ -240,6 +251,9 @@ class OrderService {
           id: snap.id, 
           orderId: data.orderId || snap.id,
           status: data.status || 'received',
+          cityId: data.cityId || 'greifswald',
+          branchId: data.branchId || 'branch-greifswald-main',
+          plz: data.plz || '',
           paymentMethod: data.paymentMethod || 'cash_on_delivery',
           paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending'),
           timeline: Array.isArray(data.timeline) ? data.timeline : []
@@ -293,6 +307,178 @@ class OrderService {
       return true;
     }
     return true;
+  }
+
+  // Assign a driver to an order (Admin feature)
+  async assignDriver(orderId: string, driverId: string, driverName?: string, driverPhone?: string): Promise<boolean> {
+    const now = new Date();
+    const formattedDate = `${now.toLocaleDateString('ar-SY', { day: 'numeric', month: 'short', year: 'numeric' })} - ${now.toLocaleTimeString('ar-SY', { hour: '2-digit', minute: '2-digit' })}`;
+
+    const timelineEntry: OrderTimelineItem = {
+      status: 'ready_for_pickup',
+      labelAr: 'تم تعيين سائق للتوصيل',
+      timestamp: formattedDate,
+      note: `تم تعيين السائق ${driverName || 'المعتمد'} لتوصيل هذا الطلب`
+    };
+
+    try {
+      const docRef = doc(collections.orders, orderId);
+      const orderDoc = await getDoc(docRef);
+      let existingTimeline: OrderTimelineItem[] = [];
+      let currentStatus: OrderStatus = 'ready_for_pickup';
+      
+      if (orderDoc.exists()) {
+        const data = orderDoc.data() as any;
+        existingTimeline = Array.isArray(data.timeline) ? data.timeline : [];
+        // If order was already on the way or ready, preserve or advance status
+        if (data.status === 'received' || data.status === 'pending' || data.status === 'confirmed' || data.status === 'preparing') {
+          currentStatus = 'ready_for_pickup';
+        } else {
+          currentStatus = data.status || 'ready_for_pickup';
+        }
+      }
+
+      const updatedTimeline = [...existingTimeline, timelineEntry];
+
+      await updateDoc(docRef, {
+        driverId,
+        driverName: driverName || '',
+        driverPhone: driverPhone || '',
+        assignedAt: formattedDate,
+        status: currentStatus,
+        updatedAt: formattedDate,
+        timeline: updatedTimeline
+      });
+
+      // Send a notification to the driver
+      try {
+        const notifId = `notif-driver-${orderId}-${Date.now()}`;
+        const notifDocRef = doc(collections.notifications, notifId);
+        await setDoc(notifDocRef, {
+          id: notifId,
+          userId: driverId,
+          title: `طلب توصيل جديد #${orderId}`,
+          message: `تم تعيين الطلب #${orderId} لك للتوصيل في غرايفسفالد. يرجى مراجعة تفاصيل الطلب والانطلاق.`,
+          read: false,
+          createdAt: formattedDate,
+          type: 'order'
+        });
+      } catch (notifErr) {
+        console.warn('Could not create driver notification:', notifErr);
+      }
+
+      const order = this.localOrdersCache.find(o => o.id === orderId || o.orderId === orderId);
+      if (order) {
+        order.driverId = driverId;
+        order.driverName = driverName;
+        order.driverPhone = driverPhone;
+        order.assignedAt = formattedDate;
+        order.status = currentStatus;
+        order.updatedAt = formattedDate;
+        order.timeline = [...(order.timeline || []), timelineEntry];
+      }
+
+      return true;
+    } catch (e) {
+      console.warn('Error assigning driver in Firestore:', e);
+      return false;
+    }
+  }
+
+  // Subscribe to driver-specific orders
+  subscribeToDriverOrders(driverId: string, callback: (orders: Order[]) => void): Unsubscribe {
+    try {
+      const q = query(collections.orders, where('driverId', '==', driverId)) as any;
+      return onSnapshot(q, (snapshot) => {
+        const firestoreOrders = snapshot.docs.map(d => {
+          const data = d.data() as any;
+          return {
+            ...data,
+            id: d.id,
+            orderId: data.orderId || d.id,
+            status: data.status || 'received',
+            cityId: data.cityId || 'greifswald',
+            branchId: data.branchId || 'branch-greifswald-main',
+            plz: data.plz || '',
+            paymentMethod: data.paymentMethod || 'cash_on_delivery',
+            paymentStatus: data.paymentStatus || (data.paymentMethod === 'bank_transfer' ? 'awaiting_transfer' : data.paymentMethod === 'card' ? 'paid' : 'pending'),
+            timeline: Array.isArray(data.timeline) ? data.timeline : []
+          } as Order;
+        });
+
+        // Sort descending by timestamp or id
+        firestoreOrders.sort((a, b) => {
+          if (b.timestamp && a.timestamp) return b.timestamp.localeCompare(a.timestamp);
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+        });
+
+        callback(firestoreOrders);
+      }, (err) => {
+        console.warn('Realtime driver orders listener error:', err);
+      });
+    } catch (e) {
+      console.warn('Failed to attach driver orders realtime listener:', e);
+      return () => {};
+    }
+  }
+
+  // Update order status by Driver (on_the_way, delivered, delivery_failed)
+  async updateDriverOrderStatus(orderId: string, status: 'on_the_way' | 'delivered' | 'delivery_failed', note?: string): Promise<boolean> {
+    const now = new Date();
+    const formattedDate = `${now.toLocaleDateString('ar-SY', { day: 'numeric', month: 'short', year: 'numeric' })} - ${now.toLocaleTimeString('ar-SY', { hour: '2-digit', minute: '2-digit' })}`;
+
+    const statusNote = note || (
+      status === 'on_the_way' ? 'السائق في الطريق لتسليم الطلب' :
+      status === 'delivered' ? 'تم تسليم الطلب للعميل واستلام القيمة' :
+      'تعذر تسليم الطلب'
+    );
+
+    const timelineEntry: OrderTimelineItem = {
+      status,
+      labelAr: ORDER_STATUS_LABELS[status] || status,
+      timestamp: formattedDate,
+      note: statusNote
+    };
+
+    try {
+      const docRef = doc(collections.orders, orderId);
+      const orderDoc = await getDoc(docRef);
+      let existingTimeline: OrderTimelineItem[] = [];
+      if (orderDoc.exists()) {
+        const data = orderDoc.data() as any;
+        existingTimeline = Array.isArray(data.timeline) ? data.timeline : [];
+      }
+
+      const updatedTimeline = [...existingTimeline, timelineEntry];
+      const updates: any = {
+        status,
+        updatedAt: formattedDate,
+        timeline: updatedTimeline
+      };
+
+      if (status === 'delivered') {
+        updates.deliveredAt = formattedDate;
+      }
+      if (status === 'delivery_failed' && note) {
+        updates.deliveryNotes = note;
+      }
+
+      await updateDoc(docRef, updates);
+
+      const order = this.localOrdersCache.find(o => o.id === orderId || o.orderId === orderId);
+      if (order) {
+        order.status = status;
+        order.updatedAt = formattedDate;
+        if (status === 'delivered') order.deliveredAt = formattedDate;
+        if (status === 'delivery_failed') order.deliveryNotes = note;
+        order.timeline = [...(order.timeline || []), timelineEntry];
+      }
+
+      return true;
+    } catch (e) {
+      console.warn('Error updating driver order status:', e);
+      return false;
+    }
   }
 }
 

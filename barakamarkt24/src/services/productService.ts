@@ -41,6 +41,24 @@ const fetchWithTimeout = async <T>(promise: Promise<T>, timeoutMs = 3500): Promi
   }
 };
 
+// Helper to strip undefined values so Firestore setDoc/updateDoc never rejects
+export function cleanFirestorePayload<T = any>(obj: any): T {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(item => cleanFirestorePayload(item)) as any;
+  }
+  if (typeof obj === 'object' && !(obj instanceof Date)) {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = cleanFirestorePayload(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return obj;
+}
+
 type ListenerCallback = () => void;
 
 const CACHE_KEYS = {
@@ -459,11 +477,14 @@ class ProductService {
       updatedAt: now
     });
 
+    const firestoreData = cleanFirestorePayload(category);
+
     try {
       const docRef = doc(collections.categories, id);
-      await setDoc(docRef, category);
+      await setDoc(docRef, firestoreData);
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, `categories/${id}`);
+      throw new Error(`فشل حفظ القسم في قاعدة البيانات: ${(e as any)?.message || 'خطأ غير معروف'}`);
     }
 
     this.categoriesCache.push(category);
@@ -473,7 +494,7 @@ class ProductService {
 
   async updateCategory(id: string, updates: Partial<Category>): Promise<Category | null> {
     const now = new Date().toISOString();
-    const cleanUpdates = {
+    const cleanUpdates: any = {
       ...updates,
       updatedAt: now
     };
@@ -484,11 +505,14 @@ class ProductService {
     if (cleanUpdates.descriptionAr && !cleanUpdates.description) cleanUpdates.description = cleanUpdates.descriptionAr;
     if (cleanUpdates.sortOrder !== undefined) cleanUpdates.sortOrder = Number(cleanUpdates.sortOrder);
 
+    const firestoreData = cleanFirestorePayload(cleanUpdates);
+
     try {
       const docRef = doc(collections.categories, id);
-      await setDoc(docRef, cleanUpdates, { merge: true });
+      await setDoc(docRef, firestoreData, { merge: true });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `categories/${id}`);
+      throw new Error(`فشل تحديث القسم في قاعدة البيانات: ${(e as any)?.message || 'خطأ غير معروف'}`);
     }
 
     const index = this.categoriesCache.findIndex(c => c.id === id || c.categoryId === id);
@@ -509,6 +533,7 @@ class ProductService {
       await deleteDoc(docRef);
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `categories/${id}`);
+      throw new Error(`فشل حذف القسم: ${(e as any)?.message || 'خطأ غير معروف'}`);
     }
 
     this.categoriesCache = this.categoriesCache.filter(c => c.id !== id && c.categoryId !== id);
@@ -565,23 +590,33 @@ class ProductService {
     isActive?: boolean;
     sortOrder?: number;
   }): Promise<Subcategory> {
+    if (!newSub.categoryId || !newSub.categoryId.trim()) {
+      throw new Error('القسم الرئيسي مطلوب لإنشاء قسم فرعي');
+    }
+    if (!newSub.name || !newSub.name.trim()) {
+      throw new Error('اسم القسم الفرعي مطلوب');
+    }
+
     const id = `sub-${Date.now()}`;
     const now = new Date().toISOString();
     const subcategory: Subcategory = this.normalizeSubcategory({
       ...newSub,
       id,
       subcategoryId: id,
-      name: newSub.name,
-      nameAr: newSub.nameAr || newSub.name,
+      name: newSub.name.trim(),
+      nameAr: (newSub.nameAr || newSub.name).trim(),
       createdAt: now,
       updatedAt: now
     });
 
+    const firestoreData = cleanFirestorePayload(subcategory);
+
     try {
       const docRef = doc(collections.subcategories, id);
-      await setDoc(docRef, subcategory);
+      await setDoc(docRef, firestoreData);
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, `subcategories/${id}`);
+      throw new Error(`فشل إضافة القسم الفرعي في Firebase: ${(e as any)?.message || 'خطأ غير معروف'}`);
     }
 
     this.subcategoriesCache.push(subcategory);
@@ -591,7 +626,7 @@ class ProductService {
 
   async updateSubcategory(id: string, updates: Partial<Subcategory>): Promise<Subcategory | null> {
     const now = new Date().toISOString();
-    const cleanUpdates = {
+    const cleanUpdates: any = {
       ...updates,
       updatedAt: now
     };
@@ -599,11 +634,14 @@ class ProductService {
     if (cleanUpdates.name && !cleanUpdates.nameAr) cleanUpdates.nameAr = cleanUpdates.name;
     if (cleanUpdates.nameAr && !cleanUpdates.name) cleanUpdates.name = cleanUpdates.nameAr;
 
+    const firestoreData = cleanFirestorePayload(cleanUpdates);
+
     try {
       const docRef = doc(collections.subcategories, id);
-      await updateDoc(docRef, cleanUpdates);
+      await setDoc(docRef, firestoreData, { merge: true });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `subcategories/${id}`);
+      throw new Error(`فشل تحديث القسم الفرعي في Firebase: ${(e as any)?.message || 'خطأ غير معروف'}`);
     }
 
     const index = this.subcategoriesCache.findIndex(s => s.id === id || s.subcategoryId === id);
@@ -624,6 +662,7 @@ class ProductService {
       await deleteDoc(docRef);
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `subcategories/${id}`);
+      throw new Error(`فشل حذف القسم الفرعي: ${(e as any)?.message || 'خطأ غير معروف'}`);
     }
 
     this.subcategoriesCache = this.subcategoriesCache.filter(s => s.id !== id && s.subcategoryId !== id);
@@ -744,43 +783,62 @@ class ProductService {
     price: number;
     categoryId: string;
   }): Promise<Product> {
-    const id = `prod-${Date.now()}`;
+    if (!newProduct.categoryId || !newProduct.categoryId.trim()) {
+      throw new Error('القسم الرئيسي إلزامي لإضافة المنتج');
+    }
+    if (!newProduct.name || !newProduct.name.trim()) {
+      throw new Error('اسم المنتج إلزامي');
+    }
+    const numericPrice = Number(newProduct.price);
+    if (isNaN(numericPrice) || numericPrice < 0) {
+      throw new Error('سعر المنتج غير صالح');
+    }
+
+    const id = newProduct.id || `prod-${Date.now()}`;
     const now = new Date().toISOString();
 
     const product: Product = this.normalizeProduct({
       ...newProduct,
       id,
       productId: id,
-      name: newProduct.name,
-      nameAr: newProduct.nameAr || newProduct.name,
-      description: newProduct.description || newProduct.descriptionAr || '',
-      descriptionAr: newProduct.descriptionAr || newProduct.description || '',
-      price: Number(newProduct.price),
-      oldPrice: newProduct.oldPrice !== undefined ? Number(newProduct.oldPrice) : undefined,
-      originalPrice: newProduct.oldPrice !== undefined ? Number(newProduct.oldPrice) : undefined,
-      discount: newProduct.discount !== undefined ? Number(newProduct.discount) : undefined,
-      categoryId: newProduct.categoryId,
-      subcategoryId: newProduct.subcategoryId || newProduct.subCategory || undefined,
-      subCategory: newProduct.subCategory || newProduct.subcategoryId || undefined,
+      name: newProduct.name.trim(),
+      nameAr: (newProduct.nameAr || newProduct.name).trim(),
+      description: (newProduct.description || newProduct.descriptionAr || '').trim(),
+      descriptionAr: (newProduct.descriptionAr || newProduct.description || '').trim(),
+      price: numericPrice,
+      oldPrice: newProduct.oldPrice !== undefined && newProduct.oldPrice !== null && !isNaN(Number(newProduct.oldPrice)) ? Number(newProduct.oldPrice) : undefined,
+      originalPrice: newProduct.oldPrice !== undefined && newProduct.oldPrice !== null && !isNaN(Number(newProduct.oldPrice)) ? Number(newProduct.oldPrice) : undefined,
+      discount: newProduct.discount !== undefined && newProduct.discount !== null && !isNaN(Number(newProduct.discount)) ? Number(newProduct.discount) : undefined,
+      categoryId: newProduct.categoryId.trim(),
+      subcategoryId: newProduct.subcategoryId?.trim() || newProduct.subCategory?.trim() || undefined,
+      subCategory: newProduct.subCategory?.trim() || newProduct.subcategoryId?.trim() || undefined,
       images: newProduct.images && newProduct.images.length > 0 ? newProduct.images : (newProduct.image ? [newProduct.image] : []),
       image: newProduct.image || (newProduct.images && newProduct.images[0]) || 'https://images.unsplash.com/photo-1552767059-ce182ead6c1b?auto=format&fit=crop&w=600&q=80',
       stock: newProduct.stock !== undefined ? Number(newProduct.stock) : 25,
       stockCount: newProduct.stock !== undefined ? Number(newProduct.stock) : 25,
-      unit: newProduct.unit || 'قطعة',
+      unit: newProduct.unit?.trim() || 'قطعة',
       isAvailable: newProduct.isAvailable !== undefined ? Boolean(newProduct.isAvailable) : true,
       isFeatured: Boolean(newProduct.isFeatured),
       createdAt: now,
       updatedAt: now
     });
 
+    const firestoreData = cleanFirestorePayload(product);
+
     try {
       const docRef = doc(collections.products, id);
-      await setDoc(docRef, product);
+      await setDoc(docRef, firestoreData);
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, `products/${id}`);
+      throw new Error(`فشل إضافة المنتج في قاعدة البيانات: ${(e as any)?.message || 'خطأ غير معروف'}`);
     }
 
-    this.productsCache.unshift(product);
+    const existingIndex = this.productsCache.findIndex(p => p.id === id || p.productId === id);
+    if (existingIndex !== -1) {
+      this.productsCache[existingIndex] = product;
+    } else {
+      this.productsCache.unshift(product);
+    }
     this.notifyListeners();
     return product;
   }
@@ -798,7 +856,7 @@ class ProductService {
     if (cleanUpdates.descriptionAr && !cleanUpdates.description) cleanUpdates.description = cleanUpdates.descriptionAr;
     if (cleanUpdates.price !== undefined) cleanUpdates.price = Number(cleanUpdates.price);
     if (cleanUpdates.oldPrice !== undefined) {
-      cleanUpdates.oldPrice = cleanUpdates.oldPrice ? Number(cleanUpdates.oldPrice) : undefined;
+      cleanUpdates.oldPrice = (cleanUpdates.oldPrice !== null && cleanUpdates.oldPrice !== '' && !isNaN(Number(cleanUpdates.oldPrice))) ? Number(cleanUpdates.oldPrice) : undefined;
       cleanUpdates.originalPrice = cleanUpdates.oldPrice;
     }
     if (cleanUpdates.stock !== undefined) {
@@ -809,11 +867,14 @@ class ProductService {
       cleanUpdates.image = cleanUpdates.images[0];
     }
 
+    const firestoreData = cleanFirestorePayload(cleanUpdates);
+
     try {
       const docRef = doc(collections.products, id);
-      await setDoc(docRef, cleanUpdates, { merge: true });
+      await setDoc(docRef, firestoreData, { merge: true });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `products/${id}`);
+      throw new Error(`فشل تحديث المنتج في قاعدة البيانات: ${(e as any)?.message || 'خطأ غير معروف'}`);
     }
 
     const index = this.productsCache.findIndex(p => p.id === id || p.productId === id);

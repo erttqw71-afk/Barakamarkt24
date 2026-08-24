@@ -452,7 +452,7 @@ export const OrdersScreen: React.FC = () => {
                           <span>عنوان التوصيل:</span>
                         </span>
                         <span className="text-stone-800 text-left font-medium">
-                          {order.address} {order.city ? `(${order.city})` : ''}
+                          {order.address} {order.plz ? `(${order.plz} ${order.city || 'Greifswald'})` : order.city ? `(${order.city})` : ''}
                         </span>
                       </div>
 

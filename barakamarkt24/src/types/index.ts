@@ -8,9 +8,10 @@ export type Screen =
   | 'profile'
   | 'orders'
   | 'wishlist'
+  | 'driver'
   | 'admin';
 
-export type BottomNavTab = 'home' | 'categories' | 'cart' | 'orders' | 'profile';
+export type BottomNavTab = 'home' | 'categories' | 'cart' | 'orders' | 'profile' | 'driver';
 
 export type CategoryId =
   | 'dairy-cheese'
@@ -135,7 +136,7 @@ export interface User {
   name: string;
   email: string;
   phone: string;
-  role: 'customer' | 'admin';
+  role: 'customer' | 'admin' | 'driver';
   address?: string;
   city?: string;
   postalCode?: string;
@@ -143,6 +144,8 @@ export interface User {
   referralCode?: string;
   referredBy?: string;
   createdAt?: string;
+  isActive?: boolean;
+  vehicleInfo?: string;
 }
 
 export type PaymentMethod = 'cash_on_delivery' | 'cod' | 'card' | 'paypal' | 'klarna' | 'bank_transfer' | 'apple_pay';
@@ -165,9 +168,11 @@ export type OrderStatus =
   | 'pending'
   | 'confirmed'
   | 'preparing'
+  | 'ready_for_pickup'
   | 'on_the_way'
   | 'out_for_delivery'
   | 'delivered'
+  | 'delivery_failed'
   | 'cancelled';
 
 export interface OrderTimelineItem {
@@ -185,6 +190,9 @@ export interface Order {
   phone: string;
   address: string;
   city?: string;
+  cityId?: string;
+  branchId?: string;
+  plz?: string;
   items: CartItem[];
   subtotal: number;
   deliveryFee?: number;
@@ -202,6 +210,12 @@ export interface Order {
   paymentStatus?: PaymentStatus | string;
   deliveryDateEstimated?: string;
   coldShippingIncluded?: boolean;
+  driverId?: string;
+  driverName?: string;
+  driverPhone?: string;
+  assignedAt?: string;
+  deliveredAt?: string;
+  deliveryNotes?: string;
 }
 
 export interface OrderItem {
@@ -303,3 +317,41 @@ export interface SyrianRecipeKit {
   cityOrigin: string;
   productIds: string[];
 }
+
+export interface City {
+  id: string;
+  nameAr: string;
+  nameDe: string;
+  nameEn?: string;
+  isActive: boolean;
+  createdAt?: string;
+}
+
+export interface Branch {
+  id: string;
+  cityId: string;
+  nameAr: string;
+  nameDe: string;
+  nameEn?: string;
+  address?: string;
+  phone?: string;
+  isActive: boolean;
+  isDefault: boolean;
+  createdAt?: string;
+}
+
+export interface DeliveryZone {
+  id: string;
+  cityId: string;
+  branchId: string;
+  plz: string;
+  nameAr?: string;
+  nameDe?: string;
+  isActive: boolean;
+  deliveryFee?: number;
+  minOrderAmount?: number;
+  estimatedTime?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
