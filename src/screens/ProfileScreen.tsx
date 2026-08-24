@@ -22,7 +22,8 @@ import {
   CheckCheck,
   Share2,
   Users,
-  Bell
+  Bell,
+  Truck
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { referralService } from '../services/referralService';
@@ -147,62 +148,104 @@ export const ProfileScreen: React.FC = () => {
   if (!currentUser) {
     return (
       <div className="p-6 space-y-6 max-w-md mx-auto text-center my-8" dir="rtl">
-        <div className="w-20 h-20 bg-stone-100 text-stone-400 rounded-3xl flex items-center justify-center mx-auto border border-stone-200 shadow-2xs">
+        <div className="w-20 h-20 bg-emerald-50 text-emerald-800 rounded-3xl flex items-center justify-center mx-auto border border-emerald-200/80 shadow-2xs">
           <UserIcon className="w-10 h-10" />
         </div>
 
         <div className="space-y-1.5">
-          <h2 className="text-lg font-black text-stone-900">حسابك في بركة ماركت</h2>
+          <h2 className="text-xl font-black text-stone-900">حسابك في بركة ماركت 24</h2>
           <p className="text-xs text-stone-500 leading-relaxed max-w-xs mx-auto">
-            سجّل الدخول لتتمكن من متابعة طلباتك، حفظ عناوين التوصيل، وإدارة قائمة المفضلة بسهولة.
+            سجّل الدخول لمتابعة طلباتك، حفظ عناوين التوصيل، الاستفادة من نظام المكافآت وإدارة قائمة المفضلة بسهولة.
           </p>
         </div>
 
-        <button
-          onClick={() => navigateTo('auth')}
-          className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3.5 px-4 rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer shadow-md active:scale-98 transition-all"
-        >
-          <LogIn className="w-4 h-4 text-amber-300" />
-          <span>تسجيل الدخول / إنشاء حساب جديد</span>
-        </button>
+        <div className="space-y-2.5 pt-2">
+          <button
+            onClick={() => navigateTo('auth')}
+            className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3.5 px-4 rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer shadow-md active:scale-98 transition-all"
+          >
+            <LogIn className="w-4 h-4 text-amber-300" />
+            <span>تسجيل الدخول إلى حسابك</span>
+          </button>
+
+          <button
+            onClick={() => navigateTo('auth')}
+            className="w-full bg-white hover:bg-stone-50 border border-stone-300 text-stone-800 font-bold py-3 px-4 rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer shadow-2xs active:scale-98 transition-all"
+          >
+            <Sparkles className="w-4 h-4 text-amber-600" />
+            <span>إنشاء حساب جديد</span>
+          </button>
+
+          <button
+            onClick={() => navigateTo('home')}
+            className="w-full bg-stone-100 hover:bg-stone-200 text-stone-600 font-semibold py-2.5 px-4 rounded-2xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>تصفح منتجات المتجر كزائر</span>
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-4 space-y-4 max-w-lg mx-auto pb-16" dir="rtl">
+    <div className="p-4 space-y-4 max-w-lg mx-auto pb-28" dir="rtl">
       
       {/* Profile Card Header */}
       <div className="bg-white p-5 rounded-3xl border border-stone-200/80 shadow-2xs space-y-4">
         
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-800 text-amber-300 font-bold text-xl flex items-center justify-center shadow-md">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-800 text-amber-300 font-bold text-xl flex items-center justify-center shadow-md shrink-0">
               {currentUser.name ? currentUser.name[0] : 'ع'}
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h1 className="font-black text-base text-stone-900 line-clamp-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="font-black text-base text-stone-900 truncate">
                   {currentUser.name}
                 </h1>
-                <span className="bg-stone-100 text-stone-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-stone-200">
-                  عميل
-                </span>
+                {currentUser.role === 'admin' && (
+                  <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-200">
+                    ⭐ مدير
+                  </span>
+                )}
+                {currentUser.role === 'driver' && (
+                  <span className="bg-cyan-100 text-cyan-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-cyan-200">
+                    🚚 سائق توصيل
+                  </span>
+                )}
+                {currentUser.role !== 'admin' && currentUser.role !== 'driver' && (
+                  <span className="bg-stone-100 text-stone-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-stone-200">
+                    عميل
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-stone-500 font-sans">{currentUser.email}</p>
+              <p className="text-xs text-stone-500 font-sans truncate">{currentUser.email}</p>
               <p className="text-[11px] text-stone-600 font-sans pt-0.5">{currentUser.phone || 'لم يتم تحديد الهاتف'}</p>
             </div>
           </div>
 
-          {!isEditing && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!isEditing && (
+              <button
+                onClick={handleStartEdit}
+                className="bg-stone-50 hover:bg-stone-100 border border-stone-200 text-stone-700 text-xs font-bold px-2.5 py-2 rounded-xl flex items-center gap-1 cursor-pointer shadow-2xs transition-colors"
+                title="تعديل البيانات"
+              >
+                <Edit3 className="w-3.5 h-3.5 text-emerald-800" />
+                <span className="hidden sm:inline">تعديل</span>
+              </button>
+            )}
+
             <button
-              onClick={handleStartEdit}
-              className="bg-stone-50 hover:bg-stone-100 border border-stone-200 text-stone-700 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+              onClick={logout}
+              className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold px-2.5 py-2 rounded-xl flex items-center gap-1 cursor-pointer shadow-2xs transition-colors"
+              title="تسجيل الخروج"
             >
-              <Edit3 className="w-3.5 h-3.5 text-emerald-800" />
-              <span>تعديل</span>
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="text-[11px]">خروج</span>
             </button>
-          )}
+          </div>
         </div>
 
         {/* Edit Form Modal/Collapse */}
@@ -387,6 +430,28 @@ export const ProfileScreen: React.FC = () => {
               </div>
             </div>
             <ChevronLeft className="w-4 h-4 text-amber-700" />
+          </button>
+        )}
+
+        {/* Driver Dashboard Entry for role === 'driver' */}
+        {currentUser.role === 'driver' && (
+          <button
+            onClick={() => navigateTo('driver')}
+            className="w-full p-4 flex items-center justify-between bg-cyan-500/10 hover:bg-cyan-500/20 transition-colors cursor-pointer text-stone-900 border-b border-cyan-200"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-2xl bg-cyan-800 text-white flex items-center justify-center shadow-xs">
+                <Truck className="w-5 h-5" />
+              </div>
+              <div className="text-right">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-black text-cyan-950">لوحة تحكم السائق</span>
+                  <span className="bg-cyan-800 text-white text-[9px] font-bold px-1.5 py-0.2 rounded-md">Driver</span>
+                </div>
+                <span className="text-[10px] text-stone-500 block">عرض الطلبات المعينة لك وتحديث مراحل التوصيل</span>
+              </div>
+            </div>
+            <ChevronLeft className="w-4 h-4 text-cyan-700" />
           </button>
         )}
 

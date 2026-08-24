@@ -29,20 +29,25 @@ interface CategoryFilterBarProps {
 
 // Icon mapper
 const ICON_MAP: Record<string, React.ReactNode> = {
-  Milk: <Milk className="w-5 h-5" />,
-  Citrus: <Citrus className="w-5 h-5" />,
-  Wheat: <Wheat className="w-5 h-5" />,
-  Droplet: <Droplet className="w-5 h-5" />,
-  Flame: <Flame className="w-5 h-5" />,
-  Box: <Box className="w-5 h-5" />,
-  Coffee: <Coffee className="w-5 h-5" />,
-  Cookie: <Cookie className="w-5 h-5" />,
-  Sparkles: <Sparkles className="w-5 h-5" />,
-  Heart: <Heart className="w-5 h-5" />,
-  ShieldCheck: <ShieldCheck className="w-5 h-5" />,
-  Smile: <Smile className="w-5 h-5" />,
-  Baby: <Baby className="w-5 h-5" />,
-  Utensils: <Utensils className="w-5 h-5" />
+  'dairy-cheese': <Milk className="w-5 h-5" />,
+  'olives-oils': <Droplet className="w-5 h-5" />,
+  'spices-herbs': <Flame className="w-5 h-5" />,
+  'sweets-desserts': <Cookie className="w-5 h-5" />,
+  'grains-legumes': <Wheat className="w-5 h-5" />,
+  'laurel-soap': <Sparkles className="w-5 h-5" />,
+  'olives-pickles': <Citrus className="w-5 h-5" />,
+  'rice-grains': <Wheat className="w-5 h-5" />,
+  'oils-sauces': <Droplet className="w-5 h-5" />,
+  'spices-seasonings': <Flame className="w-5 h-5" />,
+  'canned-preserved': <Box className="w-5 h-5" />,
+  'coffee-tea-drinks': <Coffee className="w-5 h-5" />,
+  'bread-pastries': <Utensils className="w-5 h-5" />,
+  'sweets-biscuits': <Cookie className="w-5 h-5" />,
+  'honey-jams-oriental': <Heart className="w-5 h-5" />,
+  'cleaning-soaps': <Sparkles className="w-5 h-5" />,
+  'personal-care': <Smile className="w-5 h-5" />,
+  'baby-infant': <Baby className="w-5 h-5" />,
+  'home-kitchen': <ShieldCheck className="w-5 h-5" />
 };
 
 export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
@@ -108,7 +113,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
         {CATEGORIES.map((cat) => {
           const isSelected = selectedCategory === cat.id;
           const count = productCounts[cat.id] || 0;
-          const icon = ICON_MAP[cat.icon] || <Sparkles className="w-5 h-5" />;
+          const icon = ICON_MAP[cat.id] || <Sparkles className="w-5 h-5" />;
 
           return (
             <button
