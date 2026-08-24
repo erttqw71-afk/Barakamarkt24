@@ -3,49 +3,39 @@ import { FALLBACK_PRODUCT_IMAGE, getOptimizedImageUrl } from '../../utils/imageO
 
 interface OptimizedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   src?: string;
-  alt: string;
-  className?: string;
+  alt?: string;
+  fallbackSrc?: string;
+  containerClassName?: string;
   targetWidth?: number;
   quality?: number;
-  fallbackSrc?: string;
 }
 
 export const OptimizedImage: React.FC<OptimizedImageProps> = ({
   src,
-  alt,
-  className = 'w-full h-full object-cover',
-  targetWidth = 400,
-  quality = 75,
+  alt = '',
   fallbackSrc = FALLBACK_PRODUCT_IMAGE,
+  className = '',
+  containerClassName = '',
+  targetWidth,
+  quality,
   ...props
 }) => {
-  const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  const optimizedSrc = hasError 
-    ? fallbackSrc 
-    : getOptimizedImageUrl(src, { width: targetWidth, quality });
+  const finalSrc = hasError || !src ? fallbackSrc : getOptimizedImageUrl(src, targetWidth || 400);
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-stone-100/80">
-      {/* Shimmer skeleton while loading */}
-      {!isLoaded && !hasError && (
-        <div className="absolute inset-0 bg-gradient-to-r from-stone-100 via-stone-200 to-stone-100 animate-pulse" />
-      )}
-      
+    <div className={`relative overflow-hidden ${containerClassName}`}>
       <img
-        src={optimizedSrc}
+        src={finalSrc}
         alt={alt}
         loading="lazy"
         decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setHasError(true)}
         onLoad={() => setIsLoaded(true)}
-        onError={() => {
-          setHasError(true);
-          setIsLoaded(true);
-        }}
-        className={`${className} transition-opacity duration-300 ${
-          isLoaded ? 'opacity-100' : 'opacity-0'
-        }`}
+        className={`transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-80'} ${className}`}
         {...props}
       />
     </div>

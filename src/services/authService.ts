@@ -99,11 +99,15 @@ class AuthService {
               }
             }
 
+            const role = isSuperAdminEmail(fbUser.email) 
+              ? 'admin' 
+              : (data.role === 'admin' ? 'admin' : (data.role === 'driver' ? 'driver' : 'customer'));
+
             this.currentUser = {
               ...data,
               id: fbUser.uid,
               referralCode: userReferralCode,
-              role: (data.role === 'admin' || isSuperAdminEmail(fbUser.email)) ? 'admin' : 'customer'
+              role
             };
           } else {
             // Create user document if not exists
@@ -279,11 +283,15 @@ class AuthService {
           }
         }
 
+        const role = isSuperAdminEmail(fbUser.email)
+          ? 'admin'
+          : (data.role === 'admin' ? 'admin' : (data.role === 'driver' ? 'driver' : 'customer'));
+
         this.currentUser = {
           ...data,
           id: fbUser.uid,
           referralCode: userReferralCode,
-          role: (data.role === 'admin' || isSuperAdminEmail(fbUser.email)) ? 'admin' : 'customer'
+          role
         };
       } else {
         const isAdmin = isSuperAdminEmail(fbUser.email);
