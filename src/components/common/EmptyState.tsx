@@ -1,47 +1,36 @@
 import React from 'react';
-import { PackageOpen, SearchX, RotateCcw } from 'lucide-react';
+import { PackageOpen } from 'lucide-react';
 
 interface EmptyStateProps {
-  title?: string;
+  icon?: React.ReactNode;
+  title: string;
   description?: string;
   actionText?: string;
   onAction?: () => void;
-  iconType?: 'search' | 'package' | 'default';
 }
 
 export const EmptyState: React.FC<EmptyStateProps> = ({
-  title = 'لا توجد منتجات حالياً',
-  description = 'لم نتمكن من العثور على أي عناصر تطابق اختيارك. جرب تعديل البحث أو الفلاتر.',
+  icon,
+  title,
+  description,
   actionText,
-  onAction,
-  iconType = 'package'
+  onAction
 }) => {
   return (
-    <div className="flex flex-col items-center justify-center py-12 px-6 text-center bg-white rounded-3xl border border-stone-200/60 shadow-2xs my-4">
-      <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200/60 flex items-center justify-center mb-3.5 shadow-xs">
-        {iconType === 'search' ? (
-          <SearchX className="w-8 h-8 text-stone-500" />
-        ) : (
-          <PackageOpen className="w-8 h-8 text-amber-700" />
-        )}
+    <div className="py-12 px-4 text-center space-y-3 bg-white rounded-3xl border border-stone-200/80 shadow-2xs my-4 max-w-md mx-auto">
+      <div className="w-14 h-14 rounded-2xl bg-stone-100 text-stone-400 flex items-center justify-center mx-auto">
+        {icon || <PackageOpen className="w-7 h-7" />}
       </div>
-
-      <h3 className="font-bold text-sm text-stone-900 mb-1">
-        {title}
-      </h3>
-      
-      <p className="text-xs text-stone-500 max-w-xs leading-relaxed mb-4">
-        {description}
-      </p>
-
+      <h3 className="font-bold text-sm text-stone-900">{title}</h3>
+      {description && (
+        <p className="text-xs text-stone-500 max-w-xs mx-auto leading-relaxed">{description}</p>
+      )}
       {actionText && onAction && (
         <button
-          type="button"
           onClick={onAction}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+          className="mt-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold px-5 py-2.5 rounded-2xl shadow-sm cursor-pointer transition-all active:scale-95"
         >
-          <RotateCcw className="w-3.5 h-3.5" />
-          <span>{actionText}</span>
+          {actionText}
         </button>
       )}
     </div>

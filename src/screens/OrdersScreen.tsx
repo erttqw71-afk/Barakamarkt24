@@ -25,6 +25,14 @@ import { orderService } from '../services/orderService';
 import { useApp } from '../context/AppContext';
 
 export const ORDER_STATUS_CONFIG: Record<OrderStatus, { label: string; bg: string; text: string; border: string; step: number; desc: string }> = {
+  received: {
+    label: 'تم الاستلام',
+    bg: 'bg-amber-50',
+    text: 'text-amber-800',
+    border: 'border-amber-200',
+    step: 1,
+    desc: 'تم استلام طلبك وجاري مراجعته وتأكيده من قبل فريق المتجر.'
+  },
   pending: {
     label: 'قيد الانتظار',
     bg: 'bg-amber-50',
@@ -42,15 +50,23 @@ export const ORDER_STATUS_CONFIG: Record<OrderStatus, { label: string; bg: strin
     desc: 'تم تأكيد الطلب واعتماد الفاتورة بنجاح.'
   },
   preparing: {
-    label: 'قيد التجهيز',
+    label: 'قيد التحضير',
     bg: 'bg-purple-50',
     text: 'text-purple-800',
     border: 'border-purple-200',
     step: 3,
     desc: 'جاري تغليف وتجهيز منتجات المؤونة بعناية للشحن.'
   },
+  on_the_way: {
+    label: 'في الطريق',
+    bg: 'bg-cyan-50',
+    text: 'text-cyan-800',
+    border: 'border-cyan-200',
+    step: 4,
+    desc: 'الطلب في طريقه إليك مع مندوب التوصيل الآن.'
+  },
   out_for_delivery: {
-    label: 'جاري التوصيل',
+    label: 'في الطريق',
     bg: 'bg-cyan-50',
     text: 'text-cyan-800',
     border: 'border-cyan-200',
@@ -58,7 +74,7 @@ export const ORDER_STATUS_CONFIG: Record<OrderStatus, { label: string; bg: strin
     desc: 'الطلب في طريقه إليك مع مندوب التوصيل الآن.'
   },
   delivered: {
-    label: 'تم التوصيل',
+    label: 'تم التسليم',
     bg: 'bg-emerald-50',
     text: 'text-emerald-800',
     border: 'border-emerald-200',
@@ -76,7 +92,7 @@ export const ORDER_STATUS_CONFIG: Record<OrderStatus, { label: string; bg: strin
 };
 
 export const OrdersScreen: React.FC = () => {
-  const { navigateTo, currentUser, currencySymbol } = useApp();
+  const { navigateTo, currentUser, currencySymbol, reorderOrder } = useApp();
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -102,11 +118,31 @@ export const OrdersScreen: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchOrders();
+    setIsLoading(true);
+    let unsubscribe = () => {};
+
+    if (currentUser?.role === 'admin') {
+      unsubscribe = orderService.subscribeToOrders((data) => {
+        setOrders(data);
+        setIsLoading(false);
+      }, 'all');
+    } else if (currentUser?.id) {
+      unsubscribe = orderService.subscribeToOrders((data) => {
+        setOrders(data);
+        setIsLoading(false);
+      }, currentUser.id);
+    } else {
+      setOrders([]);
+      setIsLoading(false);
+    }
+
+    return () => {
+      unsubscribe();
+    };
   }, [currentUser]);
 
   const getStatusBadge = (status: OrderStatus) => {
-    const config = ORDER_STATUS_CONFIG[status] || ORDER_STATUS_CONFIG.pending;
+    const config = ORDER_STATUS_CONFIG[status] || ORDER_STATUS_CONFIG.received;
     return (
       <span className={`${config.bg} ${config.text} ${config.border} text-[11px] font-bold px-2.5 py-0.5 rounded-full border inline-flex items-center gap-1`}>
         <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
@@ -116,18 +152,18 @@ export const OrdersScreen: React.FC = () => {
   };
 
   const filteredOrders = orders.filter(o => {
-    if (filterStatus === 'active') return ['pending', 'confirmed', 'preparing', 'out_for_delivery'].includes(o.status);
+    if (filterStatus === 'active') return ['received', 'pending', 'confirmed', 'preparing', 'on_the_way', 'out_for_delivery'].includes(o.status);
     if (filterStatus === 'delivered') return o.status === 'delivered';
     if (filterStatus === 'cancelled') return o.status === 'cancelled';
     return true;
   });
 
-  const TRACKING_STEPS: { id: OrderStatus; label: string }[] = [
-    { id: 'pending', label: 'الانتظار' },
-    { id: 'confirmed', label: 'المؤكد' },
-    { id: 'preparing', label: 'التجهيز' },
-    { id: 'out_for_delivery', label: 'التوصيل' },
-    { id: 'delivered', label: 'التسليم' }
+  const TRACKING_STEPS: { id: string; stepNumber: number; label: string }[] = [
+    { id: 'received', stepNumber: 1, label: 'مستلم' },
+    { id: 'confirmed', stepNumber: 2, label: 'تأكيد' },
+    { id: 'preparing', stepNumber: 3, label: 'تحضير' },
+    { id: 'on_the_way', stepNumber: 4, label: 'في الطريق' },
+    { id: 'delivered', stepNumber: 5, label: 'تم التسليم' }
   ];
 
   return (
@@ -261,7 +297,19 @@ export const OrdersScreen: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 text-left">
+                  <div className="flex items-center gap-2.5 text-left">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        reorderOrder(order);
+                      }}
+                      className="bg-stone-100 hover:bg-emerald-50 hover:text-emerald-800 text-stone-700 text-xs font-bold px-3 py-1.5 rounded-xl border border-stone-200 hover:border-emerald-300 flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-2xs"
+                      title="إعادة طلب هذه الأصناف"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-emerald-700" />
+                      <span className="hidden sm:inline">إعادة الطلب</span>
+                    </button>
+
                     <div className="text-left">
                       <span className="font-black text-sm text-emerald-800 font-sans block">
                         {currencySymbol || '€'}{order.total.toFixed(2)}
@@ -278,10 +326,9 @@ export const OrdersScreen: React.FC = () => {
                 {order.status !== 'cancelled' ? (
                   <div className="px-4 py-2.5 bg-stone-50/80 border-t border-stone-100 text-[10px]">
                     <div className="grid grid-cols-5 gap-1 text-center font-bold">
-                      {TRACKING_STEPS.map((step, idx) => {
-                        const stepConfig = ORDER_STATUS_CONFIG[step.id];
-                        const isReached = currentConfig.step >= stepConfig.step;
-                        const isCurrent = order.status === step.id;
+                      {TRACKING_STEPS.map((step) => {
+                        const isReached = currentConfig.step >= step.stepNumber;
+                        const isCurrent = currentConfig.step === step.stepNumber;
 
                         return (
                           <div key={step.id} className="flex flex-col items-center gap-1">
@@ -294,7 +341,7 @@ export const OrdersScreen: React.FC = () => {
                                     : 'bg-stone-200 text-stone-500'
                               }`}
                             >
-                              {isReached ? '✓' : idx + 1}
+                              {isReached ? '✓' : step.stepNumber}
                             </div>
                             <span className={`text-[9px] leading-tight ${isCurrent ? 'text-emerald-900 font-black' : isReached ? 'text-stone-800' : 'text-stone-400'}`}>
                               {step.label}
@@ -323,6 +370,30 @@ export const OrdersScreen: React.FC = () => {
                         <p className="text-stone-600">{currentConfig.desc}</p>
                       </div>
                     </div>
+
+                    {/* Timeline History if available */}
+                    {order.timeline && order.timeline.length > 0 && (
+                      <div className="bg-white p-3.5 rounded-2xl border border-stone-200/80 space-y-2">
+                        <span className="font-bold text-xs text-stone-900 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-emerald-800" />
+                          <span>سجل وتاريخ تحديثات الطلب (Timeline):</span>
+                        </span>
+                        <div className="space-y-2 pt-1 border-r-2 border-emerald-700/30 pr-3 mr-1">
+                          {order.timeline.map((t, tIdx) => (
+                            <div key={tIdx} className="relative text-[11px] space-y-0.5">
+                              <span className="w-2 h-2 rounded-full bg-emerald-800 absolute -right-[17px] top-1"></span>
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <span className="font-bold text-stone-900">{t.labelAr || t.status}</span>
+                                <span className="text-[10px] text-stone-400 font-sans">{t.timestamp}</span>
+                              </div>
+                              {t.note && (
+                                <p className="text-stone-500 text-[10px]">{t.note}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Ordered Items List */}
                     <div className="space-y-2">
@@ -375,13 +446,27 @@ export const OrdersScreen: React.FC = () => {
                         <span className="font-sans font-bold text-stone-800 text-right">{order.phone}</span>
                       </div>
 
-                      <div className="flex items-start justify-between">
+                      <div className="flex items-start justify-between border-b border-stone-100 pb-1.5">
                         <span className="font-bold text-stone-900 flex items-center gap-1 shrink-0">
                           <MapPin className="w-3.5 h-3.5 text-emerald-700 mt-0.5" />
                           <span>عنوان التوصيل:</span>
                         </span>
                         <span className="text-stone-800 text-left font-medium">
-                          {order.address} {order.city ? `(${order.city})` : ''}
+                          {order.address} {order.plz ? `(${order.plz} ${order.city || 'Greifswald'})` : order.city ? `(${order.city})` : ''}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-stone-900 flex items-center gap-1">
+                          <Receipt className="w-3.5 h-3.5 text-stone-400" />
+                          <span>طريقة الدفع:</span>
+                        </span>
+                        <span className="font-bold text-stone-800 bg-stone-100 px-2 py-0.5 rounded-md border border-stone-200 text-[10px]">
+                          {order.paymentMethod === 'bank_transfer'
+                            ? 'تحويل بنكي (Bank Transfer)'
+                            : order.paymentMethod === 'card'
+                            ? 'بطاقة بنكية (Card)'
+                            : 'الدفع نقداً عند الاستلام (COD)'}
                         </span>
                       </div>
 
@@ -416,6 +501,15 @@ export const OrdersScreen: React.FC = () => {
                         <span className="font-sans text-emerald-800 text-base">{currencySymbol || '€'}{order.total.toFixed(2)}</span>
                       </div>
                     </div>
+
+                    {/* Reorder Action Button */}
+                    <button
+                      onClick={() => reorderOrder(order)}
+                      className="w-full bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold py-3 rounded-2xl flex items-center justify-center gap-2 cursor-pointer shadow-md active:scale-98 transition-all"
+                    >
+                      <RotateCcw className="w-4 h-4 text-amber-300" />
+                      <span>إعادة طلب محتويات هذه الفاتورة للسلة (بالأسعار الحالية)</span>
+                    </button>
 
                   </div>
                 )}

@@ -5,6 +5,8 @@ import {
   onAuthStateChanged,
   sendPasswordResetEmail,
   updateProfile as updateFirebaseProfile,
+  setPersistence,
+  browserLocalPersistence,
   User as FirebaseUser
 } from 'firebase/auth';
 import { 
@@ -21,7 +23,8 @@ import { referralService } from './referralService';
 export const ADMIN_EMAILS = [
   'admin@barakamarkt24.com',
   'admin@barakamarkt24.de',
-  'erttqw71@gmail.com'
+  'erttqw71@gmail.com',
+  'barakamarkt24@gmail.com'
 ];
 
 export const isSuperAdminEmail = (email?: string | null): boolean => {
@@ -59,12 +62,24 @@ class AuthService {
   private currentUser: User | null = null;
   private listeners: ((user: User | null) => void)[] = [];
   private isInitialized = false;
+  private authReadyPromise: Promise<User | null>;
+  private resolveAuthReady!: (user: User | null) => void;
 
   constructor() {
+    this.authReadyPromise = new Promise((resolve) => {
+      this.resolveAuthReady = resolve;
+    });
     this.initAuth();
   }
 
-  private initAuth() {
+  private async initAuth() {
+    // Explicitly enforce browser local persistence (persists across browser tabs and app restarts)
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+    } catch (e) {
+      console.warn('Firebase setPersistence warning:', e);
+    }
+
     // Listen for real Firebase Auth state changes
     onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
       if (fbUser) {
@@ -84,14 +99,18 @@ class AuthService {
               }
             }
 
+            const role = isSuperAdminEmail(fbUser.email) 
+              ? 'admin' 
+              : (data.role === 'admin' ? 'admin' : (data.role === 'driver' ? 'driver' : 'customer'));
+
             this.currentUser = {
               ...data,
               id: fbUser.uid,
               referralCode: userReferralCode,
-              role: (data.role === 'admin' || isSuperAdminEmail(fbUser.email)) ? 'admin' : 'customer'
+              role
             };
           } else {
-            // Create user document
+            // Create user document if not exists
             const isAdmin = isSuperAdminEmail(fbUser.email);
             const generatedCode = referralService.generateReferralCode();
             const newUserProfile: User = {
@@ -126,7 +145,11 @@ class AuthService {
       } else {
         this.currentUser = null;
       }
-      this.isInitialized = true;
+
+      if (!this.isInitialized) {
+        this.isInitialized = true;
+        this.resolveAuthReady(this.currentUser ? { ...this.currentUser } : null);
+      }
       this.notifyListeners();
     });
   }
@@ -145,8 +168,19 @@ class AuthService {
     };
   }
 
+  public async waitForAuthReady(): Promise<User | null> {
+    if (this.isInitialized) {
+      return this.currentUser ? { ...this.currentUser } : null;
+    }
+    return this.authReadyPromise;
+  }
+
   public getCurrentUser(): User | null {
     return this.currentUser ? { ...this.currentUser } : null;
+  }
+
+  public isAuthReady(): boolean {
+    return this.isInitialized;
   }
 
   // 1. Firebase Email & Password Registration (Role is strictly customer)
@@ -249,11 +283,15 @@ class AuthService {
           }
         }
 
+        const role = isSuperAdminEmail(fbUser.email)
+          ? 'admin'
+          : (data.role === 'admin' ? 'admin' : (data.role === 'driver' ? 'driver' : 'customer'));
+
         this.currentUser = {
           ...data,
           id: fbUser.uid,
           referralCode: userReferralCode,
-          role: (data.role === 'admin' || isSuperAdminEmail(fbUser.email)) ? 'admin' : 'customer'
+          role
         };
       } else {
         const isAdmin = isSuperAdminEmail(fbUser.email);

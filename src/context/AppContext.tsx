@@ -6,12 +6,14 @@ import {
   Product, 
   Screen, 
   BottomNavTab, 
-  User 
+  User,
+  Order 
 } from '../types';
 import { productService } from '../services/productService';
 import { authService } from '../services/authService';
 import { favoriteService } from '../services/favoriteService';
 import { fcmService } from '../services/fcmService';
+import { adminService, AppSettings, DEFAULT_SETTINGS } from '../services/adminService';
 
 interface AppContextType {
   // Navigation
@@ -38,12 +40,18 @@ interface AppContextType {
   reloadProducts: () => Promise<void>;
   reloadCategories: () => Promise<void>;
 
+  // Store Settings (Firebase Synchronized)
+  storeSettings: AppSettings;
+  reloadSettings: () => Promise<void>;
+  currencySymbol: string;
+
   // Cart
   cart: CartItem[];
   addToCart: (product: Product, quantity?: number) => void;
   removeFromCart: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
+  reorderOrder: (order: Order) => void;
   cartCount: number;
   cartTotal: number;
 
@@ -59,6 +67,8 @@ interface AppContextType {
 
   // Auth & User
   currentUser: User | null;
+  isLoadingAuth: boolean;
+  isAuthReady: boolean;
   login: (email: string, password: string) => Promise<User>;
   register: (name: string, email: string, phone: string, password: string, referralCode?: string) => Promise<User>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -91,7 +101,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
+  const [storeSettings, setStoreSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isLoadingProducts, setIsLoadingProducts] = useState<boolean>(true);
+  const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(true);
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
 
   // Cart & Wishlist
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -119,66 +132,102 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [toast, setToast] = useState<string | null>(null);
 
   // Initialize data and real-time subscription
+  const reloadSettings = async () => {
+    try {
+      const s = await adminService.getSettings();
+      setStoreSettings(s);
+    } catch (e) {
+      console.warn('Error reloading settings:', e);
+    }
+  };
+
   const loadAllData = async () => {
     setIsLoadingProducts(true);
-    const [prods, cats, subs, user] = await Promise.all([
-      productService.getProducts({ includeHidden: currentUser?.role === 'admin' }),
-      productService.getCategories(currentUser?.role === 'admin'),
-      productService.getSubcategories(undefined, currentUser?.role === 'admin'),
-      authService.getCurrentUser()
+    setIsLoadingAuth(true);
+
+    // 1. Wait for Firebase auth session restore to finish
+    const user = await authService.waitForAuthReady();
+    setCurrentUser(user);
+    setIsLoadingAuth(false);
+    setIsAuthReady(true);
+
+    // 2. Fetch products, categories, and store settings
+    const [prods, cats, subs, settings] = await Promise.all([
+      productService.getProducts({ includeHidden: user?.role === 'admin' }),
+      productService.getCategories(user?.role === 'admin'),
+      productService.getSubcategories(undefined, user?.role === 'admin'),
+      adminService.getSettings()
     ]);
     setProducts(prods);
     setCategories(cats);
     setSubcategories(subs);
-    setCurrentUser(user);
+    if (settings) {
+      setStoreSettings(settings);
+    }
     setIsLoadingProducts(false);
   };
 
   useEffect(() => {
     loadAllData();
 
-    // Subscribe to real-time changes from Firestore
-    const unsubscribe = productService.subscribe(async () => {
+    // Subscribe to auth state changes from Firebase
+    const unsubAuth = authService.onUserChanged((user) => {
+      setCurrentUser(user);
+      setIsLoadingAuth(false);
+      setIsAuthReady(true);
+    });
+
+    // Subscribe to real-time changes from Firestore for products & categories
+    const unsubscribeProds = productService.subscribe(async () => {
+      const activeUser = authService.getCurrentUser();
       const [prods, cats, subs] = await Promise.all([
-        productService.getProducts({ includeHidden: currentUser?.role === 'admin' }),
-        productService.getCategories(currentUser?.role === 'admin'),
-        productService.getSubcategories(undefined, currentUser?.role === 'admin')
+        productService.getProducts({ includeHidden: activeUser?.role === 'admin' }),
+        productService.getCategories(activeUser?.role === 'admin'),
+        productService.getSubcategories(undefined, activeUser?.role === 'admin')
       ]);
       setProducts(prods);
       setCategories(cats);
       setSubcategories(subs);
     });
 
+    // Subscribe to real-time store settings updates from Firestore
+    const unsubscribeSettings = adminService.subscribeToSettings((liveSettings) => {
+      setStoreSettings(liveSettings);
+    });
+
     return () => {
-      unsubscribe();
+      unsubAuth();
+      unsubscribeProds();
+      unsubscribeSettings();
     };
-  }, [currentUser?.role]);
+  }, []);
 
   // Sync Wishlist with Firebase for Authenticated Users
   useEffect(() => {
     if (currentUser?.id && products.length > 0) {
-      favoriteService.syncFavoritesOnLogin(currentUser.id, wishlist).then((remoteProductIds) => {
+      favoriteService.getUserFavoriteProductIds(currentUser.id).then((remoteProductIds) => {
         if (remoteProductIds && remoteProductIds.length > 0) {
-          setWishlist(prev => {
-            const currentIds = new Set(prev.map(p => p.id));
-            const newFavorites = [...prev];
-            for (const pid of remoteProductIds) {
-              if (!currentIds.has(pid)) {
-                const foundProduct = products.find(p => p.id === pid);
-                if (foundProduct) {
-                  newFavorites.push(foundProduct);
-                  currentIds.add(pid);
-                }
-              }
-            }
-            return newFavorites;
-          });
+          const idSet = new Set(remoteProductIds);
+          // Only show existing, active products from Firebase
+          const activeFavorites = products.filter(p => 
+            (idSet.has(p.id) || idSet.has(p.productId || '')) && p.isAvailable !== false
+          );
+          setWishlist(activeFavorites);
+        } else {
+          setWishlist([]);
         }
       }).catch(err => {
-        console.warn('Error synchronizing favorites on auth update:', err);
+        console.warn('Error fetching favorites for user:', err);
       });
+    } else if (!currentUser?.id) {
+      setWishlist([]);
+      try {
+        localStorage.removeItem(STORAGE_KEY_WISHLIST);
+      } catch (e) {
+        console.error(e);
+      }
     }
-  }, [currentUser?.id, products.length]);
+  }, [currentUser?.id, products]);
 
   // Save Cart
   useEffect(() => {
@@ -188,6 +237,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error(e);
     }
   }, [cart]);
+
+  // Synchronize cart item prices and details when products list updates
+  useEffect(() => {
+    if (products.length > 0 && cart.length > 0) {
+      setCart(prevCart => {
+        let changed = false;
+        const updatedCart = prevCart.map(item => {
+          const fresh = products.find(p => p.id === item.product.id || p.productId === item.product.id);
+          if (fresh && (
+            fresh.price !== item.product.price ||
+            fresh.nameAr !== item.product.nameAr ||
+            fresh.name !== item.product.name ||
+            fresh.image !== item.product.image ||
+            fresh.isAvailable !== item.product.isAvailable
+          )) {
+            changed = true;
+            return {
+              ...item,
+              product: fresh
+            };
+          }
+          return item;
+        });
+        return changed ? updatedCart : prevCart;
+      });
+    }
+  }, [products]);
 
   // Save Wishlist
   useEffect(() => {
@@ -329,19 +405,91 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
   const cartTotal = cart.reduce((total, item) => total + (item.product.price * item.quantity), 0);
 
+  // Reorder previous order items with fresh Firestore product data
+  const reorderOrder = (order: Order) => {
+    if (!order || !order.items || order.items.length === 0) {
+      showToast('لا توجد منتجات في هذا الطلب لإعادة طلبها');
+      return;
+    }
+
+    let addedCount = 0;
+    const skippedNames: string[] = [];
+
+    setCart(prevCart => {
+      let updatedCart = [...prevCart];
+
+      for (const item of order.items) {
+        const pId = item.product?.id || item.product?.productId || (item as any).productId;
+        // Fetch current live product data from Firestore
+        const freshProduct = products.find(p => p.id === pId || p.productId === pId);
+
+        const rawStock = freshProduct
+          ? (freshProduct.stock !== undefined && freshProduct.stock !== null
+              ? freshProduct.stock
+              : (freshProduct.stockCount !== undefined && freshProduct.stockCount !== null ? freshProduct.stockCount : 100))
+          : 0;
+
+        const isAvailable = freshProduct && freshProduct.isAvailable !== false && freshProduct.inStock !== false && rawStock > 0;
+
+        if (!freshProduct || !isAvailable) {
+          const name = item.product?.nameAr || item.product?.name || (item as any).productNameAr || 'منتج غير متاح';
+          if (!skippedNames.includes(name)) {
+            skippedNames.push(name);
+          }
+          continue;
+        }
+
+        const qtyToAdd = Math.min(rawStock, Math.max(1, item.quantity));
+        const existingIdx = updatedCart.findIndex(ci => ci.product.id === freshProduct.id);
+
+        if (existingIdx > -1) {
+          const currentQty = updatedCart[existingIdx].quantity;
+          const newQty = Math.min(rawStock, currentQty + qtyToAdd);
+          updatedCart[existingIdx] = {
+            ...updatedCart[existingIdx],
+            product: freshProduct, // Current price and stock from Firestore
+            quantity: newQty
+          };
+        } else {
+          updatedCart.push({
+            product: freshProduct, // Current price and stock from Firestore
+            quantity: qtyToAdd
+          });
+        }
+        addedCount++;
+      }
+
+      return updatedCart;
+    });
+
+    if (addedCount > 0 && skippedNames.length === 0) {
+      showToast(`تمت إضافة جميع منتجات الطلب (${addedCount}) إلى السلة بالأسعار الحالية`);
+      navigateTo('cart');
+    } else if (addedCount > 0 && skippedNames.length > 0) {
+      showToast(`تمت إضافة ${addedCount} منتجات للسلة، وتم تخطي (${skippedNames.slice(0, 2).join('، ')}) لعدم توفرها`);
+      navigateTo('cart');
+    } else {
+      showToast(`تعذر إعادة الطلب: الأصناف المطلوبة (${skippedNames.slice(0, 2).join('، ')}) غير متوفرة حالياً`);
+    }
+  };
+
   // Wishlist & Favorites Firebase Operations
   const addToFavorites = async (product: Product) => {
+    if (!currentUser?.id) {
+      showToast('يرجى تسجيل الدخول لحفظ المنتجات في المفضلة');
+      navigateTo('auth');
+      return;
+    }
+
     setWishlist(prev => {
       if (prev.some(p => p.id === product.id)) return prev;
       return [...prev, product];
     });
 
-    if (currentUser?.id) {
-      try {
-        await favoriteService.addFavorite(currentUser.id, product.id);
-      } catch (err) {
-        console.warn('Failed to save favorite in Firebase:', err);
-      }
+    try {
+      await favoriteService.addFavorite(currentUser.id, product.id);
+    } catch (err) {
+      console.warn('Failed to save favorite in Firebase:', err);
     }
     showToast('تمت الإضافة إلى المفضلة');
   };
@@ -360,6 +508,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleWishlist = async (product: Product) => {
+    if (!currentUser?.id) {
+      showToast('يرجى تسجيل الدخول لحفظ المنتجات في المفضلة');
+      navigateTo('auth');
+      return;
+    }
+
     const exists = wishlist.some(p => p.id === product.id);
     if (exists) {
       await removeFromFavorites(product.id);
@@ -413,8 +567,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = async () => {
     await authService.logout();
     setCurrentUser(null);
+    if (currentScreen === 'admin') {
+      navigateTo('home');
+    }
     showToast('تم تسجيل الخروج بنجاح');
     await reloadCategories();
+    await reloadProducts();
   };
 
   return (
@@ -436,13 +594,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         categories,
         subcategories,
         isLoadingProducts,
+        isLoadingAuth,
+        isAuthReady,
         reloadProducts,
         reloadCategories,
+        storeSettings,
+        reloadSettings,
+        currencySymbol: storeSettings.currency || '€',
         cart,
         addToCart,
         removeFromCart,
         updateQuantity,
         clearCart,
+        reorderOrder,
         cartCount,
         cartTotal,
         wishlist,

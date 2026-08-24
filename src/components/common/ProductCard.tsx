@@ -1,228 +1,187 @@
 import React from 'react';
-import { Heart, Plus, ShoppingBag, Check, Sparkles } from 'lucide-react';
+import { Heart, Plus, Minus, Check } from 'lucide-react';
 import { Product } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { OptimizedImage } from './OptimizedImage';
 
-export const ProductCard: React.FC<{ product: Product; variant?: 'grid' | 'horizontal' }> = ({ 
-  product, 
-  variant = 'grid' 
-}) => {
-  const { navigateTo, addToCart, toggleWishlist, isInWishlist, cart } = useApp();
+interface ProductCardProps {
+  product: Product;
+  onSelect?: (product: Product) => void;
+}
 
-  const isFavorite = isInWishlist(product.id);
-  const cartItem = cart.find(item => item.product.id === product.id);
-  const qtyInCart = cartItem?.quantity || 0;
+export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) => {
+  const { 
+    setSelectedProduct, 
+    navigateTo, 
+    addToCart, 
+    cart, 
+    updateQuantity, 
+    toggleWishlist, 
+    isInWishlist, 
+    currencySymbol 
+  } = useApp();
 
-  const oldPrice = product.oldPrice || product.originalPrice;
-  const hasDiscount = Boolean((oldPrice && oldPrice > product.price) || (product.discount && product.discount > 0));
-  const discountPercent = product.discount || (oldPrice && oldPrice > product.price ? Math.round(((oldPrice - product.price) / oldPrice) * 100) : null);
-  
-  const isAvailable = product.isAvailable !== false && product.inStock;
-  const displayImage = product.image || (product.images && product.images[0]);
+  const isFavorited = isInWishlist(product.id);
+  const cartItem = cart.find(item => item.product.id === product.id || (item.product as any).productId === product.id);
+  const currentQuantity = cartItem ? cartItem.quantity : 0;
 
-  const handleCardClick = () => {
-    navigateTo('product-detail', { productId: product.id });
+  const rawStock = product.stock !== undefined && product.stock !== null 
+    ? product.stock 
+    : (product.stockCount !== undefined && product.stockCount !== null ? product.stockCount : 100);
+  const isAvailable = product.isAvailable !== false && product.inStock !== false && rawStock > 0;
+
+  const handleClick = () => {
+    if (onSelect) {
+      onSelect(product);
+    } else {
+      setSelectedProduct(product);
+      navigateTo('product_detail');
+    }
   };
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isAvailable) {
-      addToCart(product, 1);
-    }
+    if (!isAvailable) return;
+    addToCart(product, 1);
   };
 
-  const handleToggleWishlist = (e: React.MouseEvent) => {
+  const handleIncrement = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isAvailable) return;
+    if (rawStock && currentQuantity >= rawStock) {
+      return;
+    }
+    updateQuantity(product.id, currentQuantity + 1);
+  };
+
+  const handleDecrement = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    updateQuantity(product.id, currentQuantity - 1);
+  };
+
+  const handleToggleFav = (e: React.MouseEvent) => {
     e.stopPropagation();
     toggleWishlist(product);
   };
 
-  if (variant === 'horizontal') {
-    return (
-      <div 
-        onClick={handleCardClick}
-        className="bg-white rounded-2xl p-2.5 border border-stone-200/70 shadow-2xs hover:shadow-xs transition-all flex items-center gap-3 cursor-pointer active:scale-[0.99]"
-      >
-        {/* Image */}
-        <div className="relative w-20 h-20 rounded-xl overflow-hidden bg-stone-100 shrink-0 border border-stone-100">
-          <OptimizedImage 
-            src={displayImage} 
-            alt={product.nameAr || product.name} 
-            className="w-full h-full object-cover"
-            targetWidth={160}
-            quality={75}
-          />
-          {hasDiscount && discountPercent && (
-            <span className="absolute top-1 right-1 bg-rose-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md">
-              -{discountPercent}%
-            </span>
-          )}
-        </div>
-
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 text-[10px] text-stone-500 mb-0.5 flex-wrap">
-            {product.origin && (
-              <span className="bg-stone-100 px-1.5 py-0.5 rounded text-stone-700 font-medium">📍 {product.origin}</span>
-            )}
-            <span>•</span>
-            <span>{product.unit || 'قطعة'} ({product.weight || '500g'})</span>
-          </div>
-          <h4 className="font-bold text-xs text-stone-900 line-clamp-1">
-            {product.nameAr || product.name}
-          </h4>
-          <div className="flex items-baseline gap-1.5 mt-1">
-            <span className="font-black text-emerald-800 text-sm font-sans">
-              €{product.price.toFixed(2)}
-            </span>
-            {hasDiscount && oldPrice && (
-              <span className="text-[10px] text-stone-400 line-through font-sans">
-                €{oldPrice.toFixed(2)}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Action button */}
-        <div className="shrink-0 flex flex-col items-center gap-1">
-          <button
-            onClick={handleToggleWishlist}
-            className="p-1.5 text-stone-400 hover:text-rose-500 rounded-lg cursor-pointer"
-          >
-            <Heart className={`w-4 h-4 ${isFavorite ? 'text-rose-500 fill-rose-500' : ''}`} />
-          </button>
-          <button
-            onClick={handleAddToCart}
-            disabled={!isAvailable}
-            className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer shadow-xs ${
-              !isAvailable 
-                ? 'bg-stone-100 text-stone-400 cursor-not-allowed'
-                : qtyInCart > 0 
-                  ? 'bg-emerald-800 text-white' 
-                  : 'bg-stone-900 hover:bg-stone-800 text-white'
-            }`}
-          >
-            {qtyInCart > 0 ? (
-              <span className="text-xs font-bold font-sans">{qtyInCart}</span>
-            ) : (
-              <Plus className="w-4 h-4" />
-            )}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div 
-      onClick={handleCardClick}
-      className={`bg-white rounded-2xl border transition-all flex flex-col justify-between overflow-hidden group cursor-pointer active:scale-[0.98] ${
-        product.isFeatured 
-          ? 'border-amber-300 shadow-xs ring-1 ring-amber-200/60' 
-          : 'border-stone-200/70 shadow-2xs hover:shadow-md'
-      }`}
+      onClick={handleClick}
+      className="bg-white rounded-2xl p-2.5 border border-stone-200/80 hover:border-emerald-700/40 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between cursor-pointer group relative"
+      dir="rtl"
     >
-      {/* Product Image Box */}
-      <div className="relative aspect-square w-full bg-stone-50 overflow-hidden">
-        <OptimizedImage 
-          src={displayImage} 
+      {/* Top badges & Favorite button */}
+      <div className="relative w-full aspect-square bg-stone-50 rounded-xl overflow-hidden mb-2">
+        <OptimizedImage
+          src={product.image || (product.images && product.images[0])}
           alt={product.nameAr || product.name}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-          targetWidth={380}
-          quality={75}
         />
 
-        {/* Top Badges */}
-        <div className="absolute top-2 right-2 flex flex-col gap-1 items-start z-10">
+        {/* Favorite Button */}
+        <button
+          onClick={handleToggleFav}
+          aria-label="إضافة للمفضلة"
+          className="absolute top-1.5 left-1.5 w-7 h-7 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-stone-600 hover:text-rose-500 shadow-2xs transition-colors cursor-pointer z-10"
+        >
+          <Heart className={`w-3.5 h-3.5 ${isFavorited ? 'fill-rose-500 text-rose-500' : ''}`} />
+        </button>
+
+        {/* Badges */}
+        <div className="absolute top-1.5 right-1.5 flex flex-col gap-1 z-10">
+          {product.discount && product.discount > 0 && (
+            <span className="bg-rose-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded-md shadow-2xs">
+              {product.discount}%-
+            </span>
+          )}
           {product.isFeatured && (
-            <span className="bg-amber-500 text-stone-950 text-[9px] font-black px-2 py-0.5 rounded-full shadow-xs flex items-center gap-0.5">
-              <Sparkles className="w-2.5 h-2.5" />
-              <span>مميز</span>
-            </span>
-          )}
-          {hasDiscount && discountPercent && (
-            <span className="bg-rose-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-xs font-sans">
-              خصم {discountPercent}%
-            </span>
-          )}
-          {product.badge && !hasDiscount && !product.isFeatured && (
-            <span className="bg-emerald-800 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-xs">
-              {product.badge}
-            </span>
-          )}
-          {!isAvailable && (
-            <span className="bg-stone-900/90 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-xs">
-              نفد مؤقتاً
+            <span className="bg-emerald-800 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-2xs">
+              مميز
             </span>
           )}
         </div>
 
-        {/* Wishlist Button */}
-        <button
-          onClick={handleToggleWishlist}
-          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-white/90 backdrop-blur-xs text-stone-600 hover:text-rose-600 flex items-center justify-center shadow-xs cursor-pointer active:scale-90 transition-all z-10"
-          aria-label="إضافة للمفضلة"
-        >
-          <Heart className={`w-3.5 h-3.5 ${isFavorite ? 'text-rose-500 fill-rose-500' : ''}`} />
-        </button>
-
-        {/* Origin tag */}
-        {product.origin && (
-          <div className="absolute bottom-2 right-2 bg-stone-900/75 backdrop-blur-xs text-white text-[9px] font-medium px-2 py-0.5 rounded-md">
-            📍 {product.origin}
+        {!isAvailable && (
+          <div className="absolute inset-0 bg-white/80 backdrop-blur-[1px] flex items-center justify-center">
+            <span className="bg-stone-900 text-white text-[10px] font-bold px-2.5 py-1 rounded-lg">
+              نفد من المخزن
+            </span>
           </div>
         )}
       </div>
 
-      {/* Details Box */}
-      <div className="p-3 flex-1 flex flex-col justify-between space-y-2">
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-[10px] text-stone-500">
-            <span className="truncate">{product.brand || 'بركة ماركت'}</span>
-            <span>{product.unit || 'قطعة'} ({product.weight || '500g'})</span>
-          </div>
-
-          <h3 className="font-bold text-xs text-stone-900 line-clamp-2 leading-snug">
+      {/* Product Details */}
+      <div className="space-y-1.5 flex-1 flex flex-col justify-between">
+        <div>
+          <span className="text-[10px] text-stone-400 font-medium block truncate">
+            {product.origin || 'بركة ماركت'} {product.unit ? `• ${product.unit}` : ''}
+          </span>
+          <h4 className="font-bold text-xs text-stone-900 line-clamp-2 leading-snug">
             {product.nameAr || product.name}
-          </h3>
+          </h4>
+          {(product.nameDe || product.nameEn) && (
+            <span className="text-[10px] text-stone-400 font-sans block truncate pt-0.5">
+              {product.nameDe || product.nameEn}
+            </span>
+          )}
         </div>
 
-        {/* Price & Add to Cart */}
-        <div className="flex items-center justify-between pt-1 border-t border-stone-100">
+        <div className="pt-2 flex items-center justify-between mt-auto">
           <div>
-            <div className="font-black text-sm text-emerald-800 font-sans">
-              €{product.price.toFixed(2)}
+            <div className="flex items-baseline gap-1">
+              <span className="font-black text-sm text-emerald-800 font-sans">
+                {currencySymbol || '€'}{product.price.toFixed(2)}
+              </span>
+              {product.oldPrice && product.oldPrice > product.price && (
+                <span className="text-[10px] text-stone-400 line-through font-sans">
+                  {currencySymbol || '€'}{product.oldPrice.toFixed(2)}
+                </span>
+              )}
             </div>
-            {hasDiscount && oldPrice && (
-              <div className="text-[10px] text-stone-400 line-through font-sans -mt-0.5">
-                €{oldPrice.toFixed(2)}
-              </div>
-            )}
           </div>
 
-          <button
-            onClick={handleAddToCart}
-            disabled={!isAvailable}
-            className={`h-8 px-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold transition-all cursor-pointer active:scale-90 shadow-2xs ${
-              !isAvailable
-                ? 'bg-stone-100 text-stone-400 cursor-not-allowed'
-                : qtyInCart > 0
-                  ? 'bg-emerald-800 text-white'
-                  : 'bg-stone-900 hover:bg-stone-800 text-white'
-            }`}
-          >
-            {qtyInCart > 0 ? (
-              <>
-                <Check className="w-3.5 h-3.5" />
-                <span className="font-sans">{qtyInCart}</span>
-              </>
+          {/* Add / Quantity Controller */}
+          {isAvailable ? (
+            currentQuantity > 0 ? (
+              <div 
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center gap-1 bg-emerald-800 text-white rounded-xl p-0.5 shadow-2xs"
+              >
+                <button
+                  onClick={handleDecrement}
+                  aria-label="تقليل الكمية"
+                  className="w-6 h-6 rounded-lg hover:bg-emerald-700 flex items-center justify-center cursor-pointer transition-colors"
+                >
+                  <Minus className="w-3 h-3" />
+                </button>
+                <span className="text-xs font-bold font-sans px-1 min-w-4 text-center">
+                  {currentQuantity}
+                </span>
+                <button
+                  onClick={handleIncrement}
+                  aria-label="زيادة الكمية"
+                  className="w-6 h-6 rounded-lg hover:bg-emerald-700 flex items-center justify-center cursor-pointer transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                </button>
+              </div>
             ) : (
-              <>
-                <ShoppingBag className="w-3.5 h-3.5 text-amber-300" />
-                <span className="text-[11px]">أضف</span>
-              </>
-            )}
-          </button>
+              <button
+                onClick={handleAddToCart}
+                aria-label="إضافة للسلة"
+                className="w-8 h-8 rounded-xl bg-stone-100 hover:bg-emerald-800 hover:text-white text-stone-800 flex items-center justify-center cursor-pointer transition-all shadow-2xs active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            )
+          ) : (
+            <button
+              disabled
+              className="w-8 h-8 rounded-xl bg-stone-100 text-stone-300 flex items-center justify-center cursor-not-allowed"
+            >
+              <Minus className="w-3 h-3" />
+            </button>
+          )}
         </div>
       </div>
     </div>

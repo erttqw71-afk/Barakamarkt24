@@ -17,8 +17,16 @@ service cloud.firestore {
         request.auth.token.email == 'admin@barakamarkt24.com' ||
         request.auth.token.email == 'admin@barakamarkt24.de' ||
         request.auth.token.email == 'erttqw71@gmail.com' ||
+        request.auth.token.email == 'barakamarkt24@gmail.com' ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isDriver() {
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver'
       );
     }
 
@@ -29,7 +37,7 @@ service cloud.firestore {
 
     // Users Collection
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
+      allow read: if isOwner(userId) || isAdmin() || isDriver();
       allow create: if isAuthenticated() && request.auth.uid == userId && 
         (request.resource.data.role == 'customer' || !('role' in request.resource.data) || isAdmin());
       allow update: if (isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))) || isAdmin();
@@ -54,11 +62,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Orders Collection (Customer sees only their own orders, Admin sees all)
+    // Orders Collection (Customer sees only their own orders, Driver sees assigned, Admin sees all)
     match /orders/{orderId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create: if (isAuthenticated() && request.resource.data.userId == request.auth.uid) || (request.resource.data.userId == 'guest');
-      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow read: if isAdmin() || (isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.driverId == request.auth.uid));
+      allow create: if (isAuthenticated() && request.resource.data.userId == request.auth.uid) || (request.resource.data.userId == 'guest') || isAdmin();
+      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid) || (isDriver() && resource.data.driverId == request.auth.uid);
       allow delete: if isAdmin();
     }
 
@@ -103,6 +111,24 @@ service cloud.firestore {
 
     // Settings Collection (Public read, Admin write)
     match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Cities Collection (Public read, Admin write)
+    match /cities/{cityId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Branches Collection (Public read, Admin write)
+    match /branches/{branchId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Delivery Zones Collection (Public read, Admin write)
+    match /deliveryZones/{zoneId} {
       allow read: if true;
       allow write: if isAdmin();
     }
